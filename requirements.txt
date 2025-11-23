@@ -1,0 +1,21 @@
+# 医院层级扫查微服务依赖包
+
+# Web框架
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# HTTP客户端
+requests==2.31.0
+httpx==0.25.2
+
+# 数据验证和序列化
+pydantic==2.5.0
+
+# 异步支持
+aiofiles==23.2.1
+
+# 配置管理
+python-dotenv==1.0.0
+
+# 进度条
+tqdm==4.66.1
