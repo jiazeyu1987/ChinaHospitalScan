@@ -7,6 +7,8 @@
 import os
 import json
 import logging
+import time
+import uuid
 from typing import Dict, Any, Optional
 import requests
 from datetime import datetime
@@ -750,3 +752,164 @@ class LLMClient:
         except Exception as e:
             main_logger.error(f"区县医院数据获取失败: {str(e)}")
             raise ValueError(f"区县医院数据获取失败: {str(e)}")
+
+    async def get_hospital_website(self, hospital_name: str) -> Dict[str, Any]:
+        """获取医院官方网站信息（仅使用真实LLM API）"""
+        try:
+            request_id = f"REQ-{uuid.uuid4().hex[:8]}"
+            main_logger.info(f"[{request_id}] API请求开始: hospital_name='{hospital_name}'")
+            start_time = time.time()
+
+            if not hospital_name or len(hospital_name.strip()) < 2:
+                error_msg = f"医院名称无效！'{hospital_name}' 请提供有效的医院名称（至少2个字符）"
+                main_logger.error(f"[{request_id}] 参数验证失败: {error_msg}")
+                raise ValueError(error_msg)
+
+            hospital_name_clean = hospital_name.strip()
+            main_logger.info(f"[{request_id}] 医院名称标准化: '{hospital_name_clean}'")
+
+            # 构造查询医院网站的提示词
+            system_prompt = """你是一个专业的医疗信息查询专家。请根据用户提供的医院名称，查询并返回该医院的官方网站信息。
+
+请严格按照JSON格式返回，包含以下字段：
+- hospital_name: 医院全名（字符串）
+- website: 官方网站URL（字符串，必须是完整的URL，如 https://www.xxx.com）
+- website_status: 网站状态（字符串：可用/不可用/未知）
+- confidence: 信息可信度（字符串：高/中/低）
+- alternative_names: 医院的其他可能名称（字符串数组）
+- notes: 备注信息（字符串）
+
+查询要求：
+1. 优先返回医院的官方网站（以.gov.cn、.edu.cn、.com等结尾的正规域名）
+2. 如果官网不可用，返回官方认可的其他平台（如微信公众号、官方小程序等）
+3. 网站URL必须是完整的，包含协议头（http://或https://）
+4. 如果无法确定官网，返回null并说明原因
+5. 不要返回虚假或猜测的网站地址
+
+注意：
+- 必须返回有效的JSON格式
+- 确保网站URL的真实性和准确性
+- 不要在JSON前后添加其他说明文字"""
+
+            user_prompt = f"""请查询以下医院的官方网站信息：
+
+医院名称：{hospital_name_clean}
+
+请返回该医院的官方网站信息，确保网址的真实性和准确性。如果无法确定官方网站，请明确说明。"""
+
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
+
+            main_logger.info(f"[{request_id}] LLM查询开始: model={self.model}, prompt_length={len(system_prompt) + len(user_prompt)}")
+
+            # 调用LLM API
+            llm_start_time = time.time()
+            response = self._make_request(messages, max_tokens=1500)
+            llm_response_time = time.time() - llm_start_time
+
+            if not response:
+                error_msg = "LLM API返回空响应！请检查API服务是否正常。"
+                main_logger.error(f"[{request_id}] LLM查询失败: {error_msg}")
+                raise ValueError(error_msg)
+
+            main_logger.info(f"[{request_id}] LLM查询成功: response_length={len(response)}, response_time={llm_response_time:.2f}s")
+            logger.info(f"[{request_id}] === LLM回复 ===")
+            logger.info(f"[{request_id}] 原始回复: {response}")
+            logger.info(f"[{request_id}] =================")
+
+            # 解析JSON响应
+            try:
+                # 清理响应文本
+                response = response.strip()
+                if response.startswith('```json'):
+                    response = response[7:]
+                if response.startswith('```'):
+                    response = response[3:]
+                if response.endswith('```'):
+                    response = response[:-3]
+                response = response.strip()
+
+                # 提取JSON部分
+                json_start = response.find('{')
+                json_end = response.rfind('}') + 1
+
+                if json_start == -1 or json_end == -1:
+                    error_msg = f"响应中未找到有效的JSON格式！原始响应: {response[:500]}..."
+                    main_logger.error(f"[{request_id}] JSON解析失败: {error_msg}")
+                    raise ValueError(error_msg)
+
+                json_str = response[json_start:json_end]
+
+                main_logger.info(f"[{request_id}] 解析的JSON: {json_str}")
+
+                result = json.loads(json_str)
+
+                # 验证必要字段
+                if not isinstance(result, dict):
+                    error_msg = f"响应不是有效的字典格式！类型: {type(result)}"
+                    main_logger.error(f"[{request_id}] 数据格式错误: {error_msg}")
+                    raise ValueError(error_msg)
+
+                # 验证和处理返回的数据
+                required_fields = ['hospital_name', 'website']
+                missing_fields = []
+
+                for field in required_fields:
+                    if field not in result:
+                        missing_fields.append(field)
+                    elif result[field] is None and field == 'website':
+                        # website字段可以为null，但需要记录
+                        main_logger.warning(f"[{request_id}] 网站字段为null: {hospital_name_clean}")
+
+                if missing_fields:
+                    error_msg = f"缺少必要字段: {', '.join(missing_fields)}"
+                    main_logger.error(f"[{request_id}] 字段验证失败: {error_msg}")
+                    raise ValueError(error_msg)
+
+                # 验证网站URL格式
+                website = result.get('website')
+                if website and website != 'null':
+                    if not (website.startswith('http://') or website.startswith('https://')):
+                        main_logger.warning(f"[{request_id}] 网站URL格式不完整: {website}")
+                        # 自动补充https://
+                        if not website.startswith(('http://', 'https://')):
+                            website = 'https://' + website
+                            result['website'] = website
+                            main_logger.info(f"[{request_id}] 自动补充协议头: {website}")
+
+                # 添加验证和处理后的字段
+                result['llm_response_time'] = round(llm_response_time, 2)
+                result['request_id'] = request_id
+                result['raw_hospital_name'] = hospital_name_clean
+
+                main_logger.info(f"[{request_id}] 数据验证完成:")
+                main_logger.info(f"[{request_id}]   - 医院名称: {result.get('hospital_name')}")
+                main_logger.info(f"[{request_id}]   - 官方网站: {result.get('website')}")
+                main_logger.info(f"[{request_id}]   - 网站状态: {result.get('website_status')}")
+                main_logger.info(f"[{request_id}]   - 信息可信度: {result.get('confidence')}")
+                main_logger.info(f"[{request_id}]   - LLM响应时间: {llm_response_time:.2f}秒")
+
+                total_time = time.time() - start_time
+                main_logger.info(f"[{request_id}] API请求完成: 总耗时={total_time:.2f}s, 成功=true")
+
+                return result
+
+            except json.JSONDecodeError as e:
+                error_msg = f"JSON解析失败: {str(e)}"
+                main_logger.error(f"[{request_id}] {error_msg}")
+                main_logger.error(f"[{request_id}] 原始响应内容: {response}")
+                raise ValueError(f"无法解析LLM返回的医院网站JSON数据！解析错误: {str(e)}")
+
+        except ValueError as e:
+            # 重新抛出已知错误
+            total_time = time.time() - start_time
+            main_logger.error(f"[{request_id}] API请求失败: 总耗时={total_time:.2f}s, 错误={str(e)}")
+            raise e
+        except Exception as e:
+            total_time = time.time() - start_time
+            error_msg = f"医院网站查询过程中发生未知错误: {str(e)}"
+            main_logger.error(f"[{request_id}] {error_msg}")
+            main_logger.error(f"[{request_id}] 总耗时: {total_time:.2f}s")
+            raise ValueError(error_msg)

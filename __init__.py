@@ -21,7 +21,14 @@ from .schemas import (
     ScanTaskResponse,
     ScanResult,
     HospitalInfo,
-    TaskStatus
+    TaskStatus,
+    HospitalWebsiteRequest,
+    HospitalWebsiteResponse,
+    HospitalWebsiteUpdateResult,
+    BatchUpdateRequest,
+    BatchUpdateResponse,
+    HospitalUpdateResult,
+    BatchUpdateProgress
 )
 
 # 版本信息
@@ -36,18 +43,25 @@ __all__ = [
     # 主要组件
     "app",
     "Database",
-    "get_db", 
+    "get_db",
     "init_db",
     "LLMClient",
     "TaskManager",
-    
+
     # 数据模型
     "ScanTaskRequest",
-    "ScanTaskResponse", 
+    "ScanTaskResponse",
     "ScanResult",
     "HospitalInfo",
     "TaskStatus",
-    
+    "HospitalWebsiteRequest",
+    "HospitalWebsiteResponse",
+    "HospitalWebsiteUpdateResult",
+    "BatchUpdateRequest",
+    "BatchUpdateResponse",
+    "HospitalUpdateResult",
+    "BatchUpdateProgress",
+
     # 版本信息
     "VERSION_INFO"
 ]

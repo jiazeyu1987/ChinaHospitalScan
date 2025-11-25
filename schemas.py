@@ -235,3 +235,85 @@ class SearchRequest(BaseModel):
     query: str = Field(..., description="搜索关键词")
     level: Optional[DataLevel] = Field(None, description="搜索层级")
     limit: int = Field(20, description="结果限制")
+
+# 医院网站查询和更新相关模型
+class HospitalWebsiteRequest(BaseModel):
+    """医院网站查询请求模型"""
+    hospital_name: str = Field(..., description="医院名称", min_length=2, max_length=200)
+    force_update: bool = Field(False, description="是否强制更新已有网站信息")
+
+class HospitalWebsiteInfo(BaseModel):
+    """医院网站信息模型"""
+    hospital_name: str = Field(..., description="医院全名")
+    website: Optional[str] = Field(None, description="官方网站URL")
+    website_status: Optional[str] = Field(None, description="网站状态：可用/不可用/未知")
+    confidence: Optional[str] = Field(None, description="信息可信度：高/中/低")
+    alternative_names: Optional[List[str]] = Field(default_factory=list, description="医院的其他可能名称")
+    notes: Optional[str] = Field(None, description="备注信息")
+    llm_response_time: Optional[float] = Field(None, description="LLM响应时间（秒）")
+    request_id: Optional[str] = Field(None, description="请求ID")
+
+class HospitalWebsiteResponse(BaseModel):
+    """医院网站查询响应模型"""
+    success: bool = Field(..., description="操作是否成功")
+    data: Optional[Dict[str, Any]] = Field(None, description="返回数据")
+    message: str = Field(..., description="响应消息")
+    request_id: Optional[str] = Field(None, description="请求ID")
+    timestamp: datetime = Field(default_factory=datetime.now, description="响应时间")
+
+class HospitalWebsiteUpdateResult(BaseModel):
+    """医院网站更新结果模型"""
+    hospital_id: Optional[int] = Field(None, description="医院ID")
+    hospital_name: Optional[str] = Field(None, description="医院名称")
+    previous_website: Optional[str] = Field(None, description="更新前网站")
+    new_website: Optional[str] = Field(None, description="更新后网站")
+    updated: bool = Field(..., description="是否执行了更新")
+    llm_response_time: Optional[float] = Field(None, description="LLM响应时间（秒）")
+    database_update_time: Optional[float] = Field(None, description="数据库更新时间（秒）")
+    total_time: Optional[float] = Field(None, description="总处理时间（秒）")
+    request_id: Optional[str] = Field(None, description="请求ID")
+
+# 批量更新医院网站相关模型
+class BatchUpdateRequest(BaseModel):
+    """批量更新医院网站请求模型"""
+    update_all: Optional[bool] = Field(False, description="是否更新所有医院（为true时忽略其他限制参数）")
+    limit: Optional[int] = Field(1000, description="每次批量处理的医院数量限制（默认1000，最大10000）", ge=1, le=10000)
+    skip_existing: Optional[bool] = Field(False, description="跳过已有网站信息的医院（默认false）")
+    hospital_ids: Optional[List[int]] = Field(None, description="指定要更新的医院ID列表（可选，为空则更新所有医院）")
+    progress_callback_url: Optional[str] = Field(None, description="进度回调URL（可选）")
+
+class HospitalUpdateResult(BaseModel):
+    """单个医院更新结果模型"""
+    hospital_id: int
+    hospital_name: str
+    previous_website: Optional[str]
+    new_website: Optional[str]
+    success: bool
+    updated: bool
+    error_message: Optional[str]
+    llm_response_time: float
+    database_update_time: float
+    total_time: float
+    request_id: str
+
+class BatchUpdateProgress(BaseModel):
+    """批量更新进度模型"""
+    total_hospitals: int
+    processed_hospitals: int
+    successful_updates: int
+    failed_updates: int
+    skipped_hospitals: int
+    current_hospital_name: Optional[str]
+    progress_percentage: float
+    estimated_remaining_time: Optional[float]
+
+class BatchUpdateResponse(BaseModel):
+    """批量更新响应模型"""
+    success: bool
+    message: str
+    task_id: Optional[str] = Field(None, description="批量更新任务ID")
+    progress: Optional[BatchUpdateProgress] = Field(None, description="更新进度")
+    results: Optional[List[HospitalUpdateResult]] = Field(None, description="详细结果（仅在小批量或完成时返回）")
+    total_time: Optional[float] = Field(None, description="总处理时间（秒）")
+    request_id: str = Field(..., description="请求ID")
+    timestamp: datetime = Field(default_factory=datetime.now, description="响应时间")

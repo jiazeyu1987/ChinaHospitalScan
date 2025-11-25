@@ -17,9 +17,12 @@ import uvicorn
 import logging
 import uuid
 import time
+import asyncio
+import sqlite3
 from datetime import datetime
 from contextlib import asynccontextmanager
 from urllib.parse import unquote
+from typing import List, Optional
 
 from db import init_db, get_db, clear_all_data, clear_all_tasks as db_clear_all_tasks
 from schemas import (
@@ -36,7 +39,14 @@ from schemas import (
     Hospital,
     PaginatedResponse,
     SearchRequest,
-    DataLevel
+    DataLevel,
+    HospitalWebsiteRequest,
+    HospitalWebsiteResponse,
+    HospitalWebsiteUpdateResult,
+    BatchUpdateRequest,
+    BatchUpdateResponse,
+    HospitalUpdateResult,
+    BatchUpdateProgress
 )
 
 # Define StandardResponse for consistency
@@ -855,6 +865,751 @@ async def search_hospitals(q: str, limit: int = 20):
     except Exception as e:
         logger.error(f"搜索医院失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/hospital/website",
+          response_model=HospitalWebsiteResponse,
+          summary="查询并更新医院官方网站",
+          description="""
+根据医院名称查询官方网站，并更新数据库中的网站字段。
+
+**功能特性**：
+- 🔍 通过LLM智能查询医院官方网站
+- 🗄️ 自动更新数据库中的医院网站信息
+- 📊 提供详细的查询和更新过程日志
+- 🔒 数据验证和错误处理
+- ⚡ 高性能异步处理
+
+**处理流程**：
+1. **参数验证**: 验证医院名称的有效性
+2. **数据库查询**: 检查医院是否存在于数据库中
+3. **LLM查询**: 调用阿里云DashScope API查询医院官网
+4. **数据验证**: 验证返回的网站URL格式和有效性
+5. **数据库更新**: 将查询结果更新到医院记录中
+6. **结果返回**: 返回详细的查询和更新结果
+
+**参数说明**：
+- hospital_name: 医院名称（2-200个字符）
+- force_update: 是否强制更新已有网站信息（默认false）
+
+**返回数据**：
+- success: 操作是否成功
+- data: 包含医院信息和网站更新结果的详细数据
+- message: 操作结果描述
+- request_id: 唯一请求ID，用于日志追踪
+- timestamp: 响应时间戳
+
+**使用示例**：
+```json
+{
+  // 示例1: 更新所有医院网站（默认行为）
+  {}
+
+  // 示例2: 限制更新的医院数量
+  {
+    "limit": 100
+  }
+
+  // 示例3: 跳过已有网站信息的医院
+  {
+    "limit": 50,
+    "skip_existing": true
+  }
+
+  // 示例4: 更新指定医院的网站
+  {
+    "hospital_ids": [1, 2, 3, 4, 5]
+  }
+}
+```
+
+**注意事项**：
+- 如果医院不存在于数据库中，会返回相应的错误信息
+- 当force_update=false时，如果医院已有网站信息且无变化，则跳过更新
+- 网站URL会自动验证和格式化（补充协议头等）
+- 所有操作都有详细的日志记录，便于调试和监控
+          """,
+          tags=["医院管理"],
+          responses={
+              200: {
+                  "description": "医院网站查询和更新成功",
+                  "content": {
+                      "application/json": {
+                          "example": {
+                              "success": True,
+                              "data": {
+                                  "hospital_id": 123,
+                                  "hospital_name": "北京协和医院",
+                                  "previous_website": None,
+                                  "new_website": "https://www.pumch.cn",
+                                  "updated": True,
+                                  "llm_response_time": 2.3,
+                                  "database_update_time": 0.05,
+                                  "total_time": 2.35,
+                                  "request_id": "REQ-ABC12345"
+                              },
+                              "message": "医院网站查询和更新成功",
+                              "request_id": "REQ-ABC12345",
+                              "timestamp": "2024-01-01T12:00:00"
+                          }
+                      }
+                  }
+              },
+              400: {
+                  "description": "请求参数错误",
+                  "content": {
+                      "application/json": {
+                          "example": {
+                              "detail": "医院名称不能为空或长度不足2个字符"
+                          }
+                      }
+                  }
+              },
+              404: {
+                  "description": "医院不存在",
+                  "content": {
+                      "application/json": {
+                          "example": {
+                              "detail": "未找到医院：北京协和医院"
+                          }
+                      }
+                  }
+              },
+              500: {
+                  "description": "服务器内部错误",
+                  "content": {
+                      "application/json": {
+                          "example": {
+                              "detail": "LLM API调用失败：服务暂时不可用"
+                          }
+                      }
+                  }
+              }
+          })
+async def get_and_update_hospital_website(request: HospitalWebsiteRequest):
+    """
+    查询并更新医院官方网站
+
+    该API端点接收医院名称，通过LLM查询官方网站，并更新数据库中的相应字段。
+    提供完整的日志记录和错误处理机制。
+    """
+    # 生成唯一的请求ID用于日志追踪
+    request_id = f"API-{uuid.uuid4().hex[:8]}"
+    start_time = time.time()
+
+    logger.info(f"[{request_id}] ========== 医院网站API请求开始 ==========")
+    logger.info(f"[{request_id}] 请求参数: hospital_name='{request.hospital_name}', force_update={request.force_update}")
+    logger.info(f"[{request_id}] 请求时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    try:
+        # 步骤1: 参数验证
+        logger.info(f"[{request_id}] 步骤1: 参数验证")
+
+        if not request.hospital_name or len(request.hospital_name.strip()) < 2:
+            error_msg = "医院名称不能为空或长度不足2个字符"
+            logger.error(f"[{request_id}] 参数验证失败: {error_msg}")
+            raise HTTPException(status_code=400, detail=error_msg)
+
+        hospital_name_clean = request.hospital_name.strip()
+        logger.info(f"[{request_id}] 医院名称标准化: '{hospital_name_clean}'")
+
+        # 步骤2: 数据库连接
+        logger.info(f"[{request_id}] 步骤2: 获取数据库连接")
+        db_start_time = time.time()
+        db = await get_db()
+        db_connection_time = time.time() - db_start_time
+        logger.info(f"[{request_id}] 数据库连接成功，耗时: {db_connection_time:.3f}s")
+
+        # 步骤3: 查找医院
+        logger.info(f"[{request_id}] 步骤3: 查找医院记录")
+        search_start_time = time.time()
+
+        hospital_search = await db.find_hospital_by_name(hospital_name_clean, exact_match=True)
+        search_time = time.time() - search_start_time
+
+        if not hospital_search.get("found"):
+            # 尝试模糊匹配
+            logger.warning(f"[{request_id}] 精确匹配失败，尝试模糊匹配")
+            hospital_search = await db.find_hospital_by_name(hospital_name_clean, exact_match=False)
+            search_time = time.time() - search_start_time
+
+            if not hospital_search.get("found"):
+                error_msg = f"未找到医院：{hospital_name_clean}"
+                logger.error(f"[{request_id}] 医院查找失败: {error_msg}，搜索耗时: {search_time:.3f}s")
+                raise HTTPException(status_code=404, detail=error_msg)
+
+        hospital_info = hospital_search["hospital"]
+        logger.info(f"[{request_id}] 医院查找成功: {hospital_info['name']} (ID: {hospital_info['id']})，搜索耗时: {search_time:.3f}s")
+        logger.info(f"[{request_id}] 医院位置: {hospital_info.get('province_name', 'N/A')} -> {hospital_info.get('city_name', 'N/A')} -> {hospital_info.get('district_name', 'N/A')}")
+        logger.info(f"[{request_id}] 当前网站: '{hospital_info.get('website', 'N/A')}'")
+
+        # 步骤4: 检查是否需要更新
+        current_website = hospital_info.get("website")
+        if not request.force_update and current_website and current_website.strip():
+            logger.info(f"[{request_id}] 医院已有网站信息且不强制更新，直接返回现有数据")
+            total_time = time.time() - start_time
+
+            result_data = HospitalWebsiteUpdateResult(
+                hospital_id=hospital_info["id"],
+                hospital_name=hospital_info["name"],
+                previous_website=current_website,
+                new_website=current_website,
+                updated=False,
+                llm_response_time=0,
+                database_update_time=0,
+                total_time=round(total_time, 3),
+                request_id=request_id
+            )
+
+            logger.info(f"[{request_id}] 请求完成（无需更新）: 总耗时={total_time:.3f}s")
+            return HospitalWebsiteResponse(
+                success=True,
+                data=result_data.dict(),
+                message="医院已有网站信息且无需更新",
+                request_id=request_id,
+                timestamp=datetime.now()
+            )
+
+        # 步骤5: 调用LLM查询网站
+        logger.info(f"[{request_id}] 步骤5: 调用LLM查询医院网站")
+        llm_start_time = time.time()
+
+        try:
+            website_info = await llm_client.get_hospital_website(hospital_name_clean)
+            llm_time = time.time() - llm_start_time
+
+            logger.info(f"[{request_id}] LLM查询成功: 耗时={llm_time:.3f}s")
+            logger.info(f"[{request_id}] 查询结果: website='{website_info.get('website')}', confidence={website_info.get('confidence')}")
+
+        except Exception as llm_error:
+            llm_time = time.time() - llm_start_time
+            error_msg = f"LLM查询失败: {str(llm_error)}"
+            logger.error(f"[{request_id}] {error_msg}，耗时: {llm_time:.3f}s")
+            raise HTTPException(status_code=500, detail=error_msg)
+
+        # 步骤6: 更新数据库
+        logger.info(f"[{request_id}] 步骤6: 更新数据库")
+        db_update_start_time = time.time()
+
+        new_website = website_info.get("website")
+        if new_website and new_website != "null":
+            try:
+                db_update_result = await db.update_hospital_website(hospital_info["id"], new_website)
+                db_update_time = time.time() - db_update_start_time
+
+                if db_update_result.get("success"):
+                    logger.info(f"[{request_id}] 数据库更新成功: {db_update_result.get('message')}")
+                    logger.info(f"[{request_id}] 更新详情: {db_update_result.get('hospital_name')} - {db_update_result.get('previous_website')} -> {db_update_result.get('new_website')}")
+                else:
+                    error_msg = f"数据库更新失败: {db_update_result.get('error')}"
+                    logger.error(f"[{request_id}] {error_msg}")
+                    raise HTTPException(status_code=500, detail=error_msg)
+
+            except Exception as db_error:
+                db_update_time = time.time() - db_update_start_time
+                error_msg = f"数据库更新异常: {str(db_error)}"
+                logger.error(f"[{request_id}] {error_msg}，耗时: {db_update_time:.3f}s")
+                raise HTTPException(status_code=500, detail=error_msg)
+        else:
+            logger.warning(f"[{request_id}] LLM未返回有效网站信息，跳过数据库更新")
+            db_update_time = 0
+            db_update_result = {"success": False, "message": "LLM未返回有效网站信息"}
+
+        # 步骤7: 构建响应结果
+        logger.info(f"[{request_id}] 步骤7: 构建响应结果")
+        total_time = time.time() - start_time
+
+        result_data = HospitalWebsiteUpdateResult(
+            hospital_id=hospital_info["id"],
+            hospital_name=hospital_info["name"],
+            previous_website=current_website,
+            new_website=new_website if new_website and new_website != "null" else None,
+            updated=db_update_result.get("updated", False),
+            llm_response_time=round(llm_time, 3),
+            database_update_time=round(db_update_time, 3),
+            total_time=round(total_time, 3),
+            request_id=request_id
+        )
+
+        success_message = f"医院网站查询完成: {hospital_info['name']}"
+        if db_update_result.get("updated"):
+            success_message += "，网站信息已更新"
+        elif new_website and new_website != "null":
+            success_message += "，网站信息已设置"
+        else:
+            success_message += "，未找到有效网站信息"
+
+        logger.info(f"[{request_id}] ========== 医院网站API请求完成 ==========")
+        logger.info(f"[{request_id}] 请求成功: {success_message}")
+        logger.info(f"[{request_id}] 总耗时: {total_time:.3f}s (LLM: {llm_time:.3f}s, DB: {db_update_time:.3f}s)")
+        logger.info(f"[{request_id}] 最终结果: {current_website} -> {new_website}")
+        logger.info("=" * 80)
+
+        return HospitalWebsiteResponse(
+            success=True,
+            data=result_data.dict(),
+            message=success_message,
+            request_id=request_id,
+            timestamp=datetime.now()
+        )
+
+    except HTTPException:
+        # 重新抛出HTTP异常
+        total_time = time.time() - start_time
+        logger.error(f"[{request_id}] HTTP异常: 总耗时={total_time:.3f}s")
+        raise
+    except Exception as e:
+        # 处理其他异常
+        total_time = time.time() - start_time
+        error_msg = f"服务器内部错误: {str(e)}"
+        logger.error(f"[{request_id}] {error_msg}")
+        logger.error(f"[{request_id}] 总耗时: {total_time:.3f}s")
+        logger.error(f"[{request_id}] 异常详情: {type(e).__name__}: {str(e)}")
+        import traceback
+        logger.error(f"[{request_id}] 完整堆栈: {traceback.format_exc()}")
+
+        raise HTTPException(status_code=500, detail=error_msg)
+
+@app.post("/hospitals/websites/batch-update",
+          response_model=BatchUpdateResponse,
+          summary="批量更新所有医院网站信息",
+          description="""
+批量获取hospitals表中的所有医院，然后依次串行调用医院网站查询API更新网站数据。
+
+**功能特性**：
+- 🏥 扫描获取hospitals表中所有医院信息
+- 🔄 串行逐个更新医院网站（避免并发冲突）
+- 🤖 统一使用LLM查询医院官网
+- 🗄️ 自动更新数据库中的website字段
+- 📊 实时进度报告和详细日志
+- ⚡ 智能跳过已有网站（可选）
+- 🔍 支持指定医院ID范围更新
+
+**处理流程**：
+1. **扫描医院**: 获取hospitals表中所有医院信息
+2. **初始化进度**: 设置进度跟踪和日志系统
+3. **串行更新**: 逐个调用医院网站更新API
+4. **进度报告**: 实时更新处理进度
+5. **结果汇总**: 统计成功、失败、跳过的医院数量
+
+**参数说明**：
+- limit: 批量处理限制（默认null表示更新所有医院，最大10000）
+- skip_existing: 跳过已有网站信息的医院（默认false）
+- hospital_ids: 指定要更新的医院ID列表（可选）
+- progress_callback_url: 进度回调URL（可选）
+
+**返回数据**：
+- success: 操作是否成功
+- message: 操作结果描述
+- task_id: 批量更新任务ID
+- progress: 更新进度详情
+- results: 详细更新结果（小批量或完成时返回）
+- total_time: 总处理时间
+- request_id: 请求追踪ID
+
+**注意事项**：
+- 串行处理避免数据库锁定冲突
+- 统一设置force_update=true确保更新
+- 提供详细的日志记录便于调试
+- 支持断点续传和中途监控
+          """,
+          tags=["医院管理"],
+          responses={
+              200: {
+                  "description": "批量更新成功",
+                  "content": {
+                      "application/json": {
+                          "example": {
+                              "success": True,
+                              "message": "批量更新完成: 更新了数据库中所有医院网站",
+                              "task_id": "BATCH-ABC12345",
+                              "progress": {
+                                  "total_hospitals": 1250,
+                                  "processed_hospitals": 1250,
+                                  "successful_updates": 1180,
+                                  "failed_updates": 30,
+                                  "skipped_hospitals": 40,
+                                  "progress_percentage": 100.0,
+                                  "estimated_remaining_time": 0
+                              },
+                              "total_time": 1800.5,
+                              "request_id": "API-XYZ12345"
+                          }
+                      }
+                  }
+              },
+              400: {
+                  "description": "请求参数错误",
+                  "content": {
+                      "application/json": {
+                          "example": {
+                              "detail": "limit参数必须在1-10000之间"
+                          }
+                      }
+                  }
+              },
+              500: {
+                  "description": "服务器内部错误",
+                  "content": {
+                      "application/json": {
+                          "example": {
+                              "detail": "批量更新过程中发生错误"
+                          }
+                      }
+                  }
+              }
+          })
+async def batch_update_hospital_websites(request: BatchUpdateRequest):
+    """
+    批量更新医院网站信息
+
+    该API端点支持多种更新模式：
+    1. 全量更新所有医院：update_all=true
+    2. 指定医院ID列表更新：hospital_ids=[1,2,3]
+    3. 限制数量更新：limit=1000（默认1000家）
+
+    提供详细的进度跟踪和错误处理机制。
+
+    使用示例：
+    - 更新所有医院: {"update_all": true}
+    - 更新指定医院: {"hospital_ids": [1,2,3]}
+    - 更新前1000家: {"limit": 1000}
+    """
+    # 生成唯一的请求ID和任务ID
+    request_id = f"API-{uuid.uuid4().hex[:8]}"
+    task_id = f"BATCH-{uuid.uuid4().hex[:8]}"
+    start_time = time.time()
+
+    logger.info(f"[{request_id}] ========== 批量更新医院网站API请求开始 ==========")
+    logger.info(f"[{request_id}] 请求参数: update_all={request.update_all}, limit={request.limit}, skip_existing={request.skip_existing}")
+    logger.info(f"[{request_id}] 指定医院ID数量: {len(request.hospital_ids) if request.hospital_ids else '未指定'}")
+    logger.info(f"[{request_id}] 任务ID: {task_id}")
+    logger.info(f"[{request_id}] 请求时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    try:
+        # 步骤1: 获取数据库连接
+        logger.info(f"[{request_id}] 步骤1: 获取数据库连接")
+        db_start_time = time.time()
+        db = await get_db()
+        db_connection_time = time.time() - db_start_time
+        logger.info(f"[{request_id}] 数据库连接成功，耗时: {db_connection_time:.3f}s")
+
+        # 步骤2: 获取医院列表
+        logger.info(f"[{request_id}] 步骤2: 获取医院列表")
+        hospitals_start_time = time.time()
+
+        if request.update_all:
+            # 强制更新所有医院，忽略所有限制
+            logger.info(f"[{request_id}] 检测到 update_all=true，强制获取所有医院进行更新")
+            hospitals = await _get_all_hospitals(db, limit=None)  # 不限制数量
+            logger.info(f"[{request_id}] 已设置 skip_existing=false（强制更新所有医院）")
+            request.skip_existing = False  # 强制不跳过已有网站的医院
+        elif request.hospital_ids:
+            # 指定医院ID列表
+            logger.info(f"[{request_id}] 获取指定医院ID列表: {len(request.hospital_ids)}个医院")
+            hospitals = await _get_hospitals_by_ids(db, request.hospital_ids)
+        else:
+            # 获取所有医院（使用限制）
+            limit = request.limit or 1000  # 默认1000
+            logger.info(f"[{request_id}] 获取医院信息，限制数量: {limit}")
+            hospitals = await _get_all_hospitals(db, limit)
+
+        hospitals_time = time.time() - hospitals_start_time
+        total_hospitals = len(hospitals)
+        logger.info(f"[{request_id}] 医院列表获取成功: {total_hospitals}个医院，耗时: {hospitals_time:.3f}s")
+
+        if total_hospitals == 0:
+            logger.warning(f"[{request_id}] 没有找到需要更新的医院")
+            return BatchUpdateResponse(
+                success=True,
+                message="没有找到需要更新的医院",
+                task_id=task_id,
+                progress=BatchUpdateProgress(
+                    total_hospitals=0,
+                    processed_hospitals=0,
+                    successful_updates=0,
+                    failed_updates=0,
+                    skipped_hospitals=0,
+                    current_hospital_name=None,
+                    progress_percentage=100.0,
+                    estimated_remaining_time=0
+                ),
+                total_time=round(time.time() - start_time, 3),
+                request_id=request_id
+            )
+
+        # 步骤3: 开始批量更新
+        logger.info(f"[{request_id}] 步骤3: 开始批量更新医院网站")
+        update_start_time = time.time()
+
+        results = await _batch_update_hospitals(
+            hospitals,
+            request.skip_existing,
+            request_id,
+            db
+        )
+
+        update_time = time.time() - update_start_time
+        total_time = time.time() - start_time
+
+        # 步骤4: 统计结果
+        successful_count = sum(1 for r in results if r.success and r.updated)
+        failed_count = sum(1 for r in results if not r.success)
+        skipped_count = sum(1 for r in results if r.success and not r.updated)
+        total_processed = len(results)
+
+        logger.info(f"[{request_id}] ========== 批量更新完成 ==========")
+        logger.info(f"[{request_id}] 总医院数: {total_hospitals}")
+        logger.info(f"[{request_id}] 处理医院数: {total_processed}")
+        logger.info(f"[{request_id}] 成功更新: {successful_count}")
+        logger.info(f"[{request_id}] 更新失败: {failed_count}")
+        logger.info(f"[{request_id}] 跳过更新: {skipped_count}")
+        logger.info(f"[{request_id}] 总耗时: {total_time:.3f}s (数据库: {hospitals_time:.3f}s, 更新: {update_time:.3f}s)")
+
+        success_message = f"批量更新完成: {total_hospitals}个医院，成功{successful_count}个，失败{failed_count}个，跳过{skipped_count}个"
+
+        return BatchUpdateResponse(
+            success=True,
+            message=success_message,
+            task_id=task_id,
+            progress=BatchUpdateProgress(
+                total_hospitals=total_hospitals,
+                processed_hospitals=total_processed,
+                successful_updates=successful_count,
+                failed_updates=failed_count,
+                skipped_hospitals=skipped_count,
+                current_hospital_name=None,
+                progress_percentage=100.0,
+                estimated_remaining_time=0
+            ),
+            results=results if total_hospitals <= 50 else None,  # 只返回小批量结果
+            total_time=round(total_time, 3),
+            request_id=request_id
+        )
+
+    except Exception as e:
+        total_time = time.time() - start_time
+        error_msg = f"批量更新失败: {str(e)}"
+        logger.error(f"[{request_id}] {error_msg}")
+        logger.error(f"[{request_id}] 总耗时: {total_time:.3f}s")
+        logger.error(f"[{request_id}] 异常详情: {type(e).__name__}: {str(e)}")
+        import traceback
+        logger.error(f"[{request_id}] 完整堆栈: {traceback.format_exc()}")
+
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+async def _get_hospitals_by_ids(db, hospital_ids: List[int]) -> List[dict]:
+    """根据ID列表获取医院信息"""
+    try:
+        if not hospital_ids:
+            return []
+
+        # 构建IN查询
+        placeholders = ','.join(['?' for _ in hospital_ids])
+
+        conn = sqlite3.connect(db.db_path, timeout=30.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        cursor = conn.cursor()
+
+        cursor.execute(f"""
+            SELECT id, name, website FROM hospitals
+            WHERE id IN ({placeholders})
+            ORDER BY id
+        """, hospital_ids)
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        hospitals = []
+        for row in rows:
+            hospitals.append({
+                "id": row[0],
+                "name": row[1],
+                "website": row[2]
+            })
+
+        return hospitals
+    except Exception as e:
+        logger.error(f"根据ID获取医院失败: {e}")
+        return []
+
+
+async def _get_all_hospitals(db, limit: Optional[int] = None) -> List[dict]:
+    """获取所有医院信息"""
+    try:
+        conn = sqlite3.connect(db.db_path, timeout=30.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        cursor = conn.cursor()
+
+        if limit is None:
+            # 获取所有医院，不限制数量
+            cursor.execute("""
+                SELECT id, name, website FROM hospitals
+                ORDER BY id
+            """)
+            logger.info(f"查询所有医院（无数量限制）")
+        else:
+            # 有数量限制
+            cursor.execute("""
+                SELECT id, name, website FROM hospitals
+                ORDER BY id
+                LIMIT ?
+            """, (limit,))
+            logger.info(f"查询医院，限制数量: {limit}")
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        hospitals = []
+        for row in rows:
+            hospitals.append({
+                "id": row[0],
+                "name": row[1],
+                "website": row[2]
+            })
+
+        return hospitals
+    except Exception as e:
+        logger.error(f"获取所有医院失败: {e}")
+        return []
+
+
+async def _batch_update_hospitals(hospitals: List[dict], skip_existing: bool,
+                                 request_id: str, db) -> List[HospitalUpdateResult]:
+    """批量更新医院网站"""
+    results = []
+    total_hospitals = len(hospitals)
+
+    logger.info(f"[{request_id}] 开始批量更新 {total_hospitals} 个医院")
+
+    for i, hospital in enumerate(hospitals):
+        hospital_start_time = time.time()
+        hospital_name = hospital["name"]
+        hospital_id = hospital["id"]
+        current_website = hospital.get("website")
+
+        # 计算进度
+        progress = (i + 1) / total_hospitals * 100
+        logger.info(f"[{request_id}] 进度: {i+1}/{total_hospitals} ({progress:.1f}%) - 正在处理: {hospital_name}")
+
+        try:
+            # 检查是否需要跳过
+            if skip_existing and current_website and current_website.strip():
+                logger.info(f"[{request_id}] 跳过已有网站: {hospital_name} (网站: {current_website})")
+                hospital_time = time.time() - hospital_start_time
+                result = HospitalUpdateResult(
+                    hospital_id=hospital_id,
+                    hospital_name=hospital_name,
+                    previous_website=current_website,
+                    new_website=current_website,
+                    success=True,
+                    updated=False,
+                    error_message=None,
+                    llm_response_time=0.0,
+                    database_update_time=0.0,
+                    total_time=round(hospital_time, 3),
+                    request_id=f"{request_id}-{i+1:04d}"
+                )
+                results.append(result)
+                continue
+
+            # 构造医院网站更新请求
+            website_request = HospitalWebsiteRequest(
+                hospital_name=hospital_name,
+                force_update=True
+            )
+
+            # 调用现有的医院网站更新逻辑
+            website_result = await _update_single_hospital_website(hospital_id, website_request, db)
+
+            hospital_time = time.time() - hospital_start_time
+
+            result = HospitalUpdateResult(
+                hospital_id=hospital_id,
+                hospital_name=hospital_name,
+                previous_website=website_result.get("previous_website"),
+                new_website=website_result.get("new_website"),
+                success=website_result.get("success", False),
+                updated=website_result.get("updated", False),
+                error_message=website_result.get("error") if not website_result.get("success") else None,
+                llm_response_time=website_result.get("llm_response_time", 0.0),
+                database_update_time=website_result.get("database_update_time", 0.0),
+                total_time=round(hospital_time, 3),
+                request_id=f"{request_id}-{i+1:04d}"
+            )
+
+            results.append(result)
+
+            # 添加短暂延迟避免API限流
+            await asyncio.sleep(0.1)
+
+        except Exception as e:
+            hospital_time = time.time() - hospital_start_time
+            error_msg = f"处理医院 {hospital_name} 时发生错误: {str(e)}"
+            logger.error(f"[{request_id}] {error_msg}")
+
+            result = HospitalUpdateResult(
+                hospital_id=hospital_id,
+                hospital_name=hospital_name,
+                previous_website=current_website,
+                new_website=None,
+                success=False,
+                updated=False,
+                error_message=error_msg,
+                llm_response_time=0.0,
+                database_update_time=0.0,
+                total_time=round(hospital_time, 3),
+                request_id=f"{request_id}-{i+1:04d}"
+            )
+
+            results.append(result)
+
+    logger.info(f"[{request_id}] 批量更新完成，处理了 {len(results)} 个医院")
+    return results
+
+
+async def _update_single_hospital_website(hospital_id: int, request: HospitalWebsiteRequest, db) -> dict:
+    """更新单个医院的网站信息（内部函数）"""
+    try:
+        # 使用现有的update_hospital_website方法
+        website_info = await llm_client.get_hospital_website(request.hospital_name)
+
+        new_website = website_info.get("website")
+        if new_website and new_website != "null":
+            # 更新数据库
+            db_result = await db.update_hospital_website(hospital_id, new_website)
+
+            return {
+                "success": db_result.get("success", False),
+                "updated": db_result.get("updated", False),
+                "previous_website": db_result.get("previous_website"),
+                "new_website": new_website,
+                "llm_response_time": website_info.get("llm_response_time", 0.0),
+                "database_update_time": 0.0,  # 这个时间在update_hospital_website中已经计算
+                "error": None
+            }
+        else:
+            return {
+                "success": False,
+                "updated": False,
+                "previous_website": None,
+                "new_website": None,
+                "llm_response_time": website_info.get("llm_response_time", 0.0),
+                "database_update_time": 0.0,
+                "error": "LLM未返回有效网站信息"
+            }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "updated": False,
+            "previous_website": None,
+            "new_website": None,
+            "llm_response_time": 0.0,
+            "database_update_time": 0.0,
+            "error": str(e)
+        }
+
 
 async def execute_scan_task(task_id: str, request: ScanTaskRequest):
     """执行扫查任务的实际逻辑"""

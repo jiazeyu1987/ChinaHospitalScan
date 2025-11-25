@@ -7,6 +7,8 @@
 import sqlite3
 import asyncio
 import logging
+import uuid
+import time
 from datetime import datetime
 from typing import Optional, Dict, Any
 import json
@@ -82,7 +84,7 @@ class Database:
     async def init_db(self):
         """初始化数据库"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
                 cursor = conn.cursor()
                 
                 # 创建任务表
@@ -209,7 +211,7 @@ class Database:
     async def create_task(self, task_id: str, hospital_name: str, query: str, status: str, task_type: str = "hospital") -> bool:
         """创建任务"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
                 cursor = conn.cursor()
                 now = datetime.now().isoformat()
 
@@ -229,7 +231,7 @@ class Database:
     async def update_task_status(self, task_id: str, status: str, error_message: Optional[str] = None) -> bool:
         """更新任务状态"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
                 cursor = conn.cursor()
                 now = datetime.now().isoformat()
                 
@@ -256,7 +258,7 @@ class Database:
     async def save_task_result(self, task_id: str, result: Dict[str, Any]) -> bool:
         """保存任务结果"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
                 cursor = conn.cursor()
                 now = datetime.now().isoformat()
                 
@@ -279,7 +281,7 @@ class Database:
     async def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         """获取任务信息"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
                 cursor = conn.cursor()
                 
                 cursor.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,))
@@ -310,7 +312,7 @@ class Database:
     async def list_tasks(self, limit: int = 100) -> list:
         """获取任务列表"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
                 cursor = conn.cursor()
                 
                 cursor.execute("""
@@ -331,7 +333,7 @@ class Database:
     async def save_hospital_info(self, task_id: str, hospital_info: Dict[str, Any]) -> bool:
         """保存医院信息"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
                 cursor = conn.cursor()
                 now = datetime.now().isoformat()
                 
@@ -365,7 +367,7 @@ class Database:
     async def create_province(self, name: str, code: str = None) -> int:
         """创建省份"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
                 cursor = conn.cursor()
                 now = datetime.now().isoformat()
                 
@@ -617,7 +619,7 @@ class Database:
     async def create_district(self, name: str, city_id: int, code: str = None) -> int:
         """创建区县"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
                 cursor = conn.cursor()
                 now = datetime.now().isoformat()
                 
@@ -754,7 +756,7 @@ class Database:
                             specializations: list = None, website: str = None) -> int:
         """创建医院"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
                 cursor = conn.cursor()
                 now = datetime.now().isoformat()
 
@@ -840,7 +842,7 @@ class Database:
     async def search_hospitals(self, query: str, limit: int = 20) -> list:
         """搜索医院"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
                 cursor = conn.cursor()
 
                 cursor.execute("""
@@ -863,7 +865,7 @@ class Database:
     async def get_hospital_by_name_and_district(self, hospital_name: str, district_id: int) -> dict:
         """根据医院名称和区县ID获取医院信息"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
                 cursor = conn.cursor()
 
                 cursor.execute("""
@@ -889,7 +891,7 @@ class Database:
                             specializations: list = None, website: str = None) -> bool:
         """更新医院信息"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
                 cursor = conn.cursor()
 
                 # 构建更新字段列表
@@ -950,10 +952,216 @@ class Database:
             logger.error(f"更新医院信息失败: {e}")
             return False
 
+    async def update_hospital_website(self, hospital_id: int, website: str) -> dict:
+        """专门更新医院网站信息"""
+        request_id = f"DB-{uuid.uuid4().hex[:8]}"
+        logger.info(f"[{request_id}] 数据库操作开始: update_hospital_website")
+        logger.info(f"[{request_id}] 参数: hospital_id={hospital_id}, website='{website}'")
+
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+
+                # 首先获取医院当前信息
+            logger.info(f"[{request_id}] 步骤1: 查询当前医院信息")
+            cursor.execute("""
+                SELECT id, name, website FROM hospitals WHERE id = ?
+            """, (hospital_id,))
+
+            hospital_info = cursor.fetchone()
+            if not hospital_info:
+                error_msg = f"医院ID {hospital_id} 不存在"
+                logger.error(f"[{request_id}] 数据库错误: {error_msg}")
+                conn.close()
+                return {"success": False, "error": error_msg, "request_id": request_id}
+
+            current_hospital = {
+                "id": hospital_info[0],
+                "name": hospital_info[1],
+                "current_website": hospital_info[2]
+            }
+
+            logger.info(f"[{request_id}] 当前医院信息: name='{current_hospital['name']}', current_website='{current_hospital['current_website']}'")
+
+            # 检查是否需要更新
+            if current_hospital['current_website'] == website:
+                logger.info(f"[{request_id}] 网站信息无变化，跳过更新")
+                conn.close()
+                return {
+                    "success": True,
+                    "updated": False,
+                    "message": "网站信息无变化",
+                    "hospital_name": current_hospital['name'],
+                    "previous_website": current_hospital['current_website'],
+                    "new_website": website,
+                    "request_id": request_id
+                }
+
+            # 执行更新操作
+            logger.info(f"[{request_id}] 步骤2: 执行网站更新操作")
+            cursor.execute("""
+                UPDATE hospitals
+                SET website = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (website, hospital_id))
+
+            rows_affected = cursor.rowcount
+            conn.commit()
+            conn.close()
+
+            if rows_affected > 0:
+                logger.info(f"[{request_id}] 数据库更新成功: 影响行数={rows_affected}")
+                logger.info(f"[{request_id}] 更新详情: name='{current_hospital['name']}', old_website='{current_hospital['current_website']}', new_website='{website}'")
+
+                return {
+                    "success": True,
+                    "updated": True,
+                    "message": "医院网站更新成功",
+                    "hospital_id": hospital_id,
+                    "hospital_name": current_hospital['name'],
+                    "previous_website": current_hospital['current_website'],
+                    "new_website": website,
+                    "rows_affected": rows_affected,
+                    "request_id": request_id
+                }
+            else:
+                error_msg = f"更新失败，影响行数为0"
+                logger.error(f"[{request_id}] 数据库错误: {error_msg}")
+                conn.close()
+                return {"success": False, "error": error_msg, "request_id": request_id}
+
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e):
+                # 数据库锁定时重试
+                logger.warning(f"[{request_id}] 数据库锁定，等待重试...")
+                import time
+                time.sleep(0.5)  # 等待0.5秒后重试
+                try:
+                    # 重试一次
+                    return await self.update_hospital_website(hospital_id, website)
+                except:
+                    error_msg = f"数据库锁定重试失败: {str(e)}"
+                    logger.error(f"[{request_id}] {error_msg}")
+                    return {"success": False, "error": error_msg, "request_id": request_id}
+            else:
+                error_msg = f"更新医院网站失败: {str(e)}"
+                logger.error(f"[{request_id}] 数据库异常: {error_msg}")
+                logger.error(f"[{request_id}] 异常详情: {type(e).__name__}: {str(e)}")
+                import traceback
+                logger.error(f"[{request_id}] 完整堆栈: {traceback.format_exc()}")
+                return {"success": False, "error": error_msg, "request_id": request_id}
+        except Exception as e:
+            error_msg = f"更新医院网站失败: {str(e)}"
+            logger.error(f"[{request_id}] 数据库异常: {error_msg}")
+            logger.error(f"[{request_id}] 异常详情: {type(e).__name__}: {str(e)}")
+            import traceback
+            logger.error(f"[{request_id}] 完整堆栈: {traceback.format_exc()}")
+            return {"success": False, "error": error_msg, "request_id": request_id}
+        finally:
+            # 确保连接被关闭
+            try:
+                if 'conn' in locals():
+                    conn.close()
+            except:
+                pass
+
+    async def find_hospital_by_name(self, hospital_name: str, exact_match: bool = True) -> dict:
+        """根据医院名称查找医院信息"""
+        request_id = f"DB-{uuid.uuid4().hex[:8]}"
+        logger.info(f"[{request_id}] 数据库查询开始: find_hospital_by_name")
+        logger.info(f"[{request_id}] 参数: hospital_name='{hospital_name}', exact_match={exact_match}")
+
+        try:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+                cursor = conn.cursor()
+
+                if exact_match:
+                    # 精确匹配
+                    logger.info(f"[{request_id}] 执行精确匹配查询")
+                    cursor.execute("""
+                        SELECT h.id, h.name, h.level, h.district_id, h.address, h.phone,
+                               h.website, h.beds_count, h.staff_count, h.departments,
+                               h.specializations, d.name as district_name,
+                               c.name as city_name, p.name as province_name
+                        FROM hospitals h
+                        LEFT JOIN districts d ON h.district_id = d.id
+                        LEFT JOIN cities c ON d.city_id = c.id
+                        LEFT JOIN provinces p ON c.province_id = p.id
+                        WHERE h.name = ?
+                        ORDER BY h.name
+                        LIMIT 1
+                    """, (hospital_name.strip(),))
+                else:
+                    # 模糊匹配
+                    logger.info(f"[{request_id}] 执行模糊匹配查询")
+                    cursor.execute("""
+                        SELECT h.id, h.name, h.level, h.district_id, h.address, h.phone,
+                               h.website, h.beds_count, h.staff_count, h.departments,
+                               h.specializations, d.name as district_name,
+                               c.name as city_name, p.name as province_name
+                        FROM hospitals h
+                        LEFT JOIN districts d ON h.district_id = d.id
+                        LEFT JOIN cities c ON d.city_id = c.id
+                        LEFT JOIN provinces p ON c.province_id = p.id
+                        WHERE h.name LIKE ?
+                        ORDER BY h.name
+                        LIMIT 5
+                    """, (f"%{hospital_name.strip()}%",))
+
+                result = cursor.fetchone()
+
+                if result:
+                    hospital_data = {
+                        "id": result[0],
+                        "name": result[1],
+                        "level": result[2],
+                        "district_id": result[3],
+                        "address": result[4],
+                        "phone": result[5],
+                        "website": result[6],
+                        "beds_count": result[7],
+                        "staff_count": result[8],
+                        "departments": result[9],
+                        "specializations": result[10],
+                        "district_name": result[11],
+                        "city_name": result[12],
+                        "province_name": result[13]
+                    }
+
+                    logger.info(f"[{request_id}] 查询成功: 找到医院 '{hospital_data['name']}' (ID: {hospital_data['id']})")
+                    logger.info(f"[{request_id}] 医院位置: {hospital_data['province_name']} -> {hospital_data['city_name']} -> {hospital_data['district_name']}")
+                    logger.info(f"[{request_id}] 当前网站: '{hospital_data['website']}'")
+
+                    return {
+                        "found": True,
+                        "hospital": hospital_data,
+                        "request_id": request_id
+                    }
+                else:
+                    logger.warning(f"[{request_id}] 未找到医院: '{hospital_name}'")
+                    return {
+                        "found": False,
+                        "error": f"未找到医院: {hospital_name}",
+                        "request_id": request_id
+                    }
+
+        except Exception as e:
+            error_msg = f"查找医院失败: {str(e)}"
+            logger.error(f"[{request_id}] 数据库异常: {error_msg}")
+            logger.error(f"[{request_id}] 异常详情: {type(e).__name__}: {str(e)}")
+            import traceback
+            logger.error(f"[{request_id}] 完整堆栈: {traceback.format_exc()}")
+            return {
+                "found": False,
+                "error": error_msg,
+                "request_id": request_id
+            }
+
     async def get_task_info(self, task_id: str) -> dict:
         """获取任务基本信息"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
                 cursor = conn.cursor()
 
                 cursor.execute("""
@@ -986,7 +1194,7 @@ class Database:
     async def clear_all_tasks(self) -> bool:
         """删除所有任务记录"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
                 cursor = conn.cursor()
 
                 # 删除所有任务记录
@@ -1006,7 +1214,7 @@ class Database:
     async def delete_completed_task(self, task_id: str) -> bool:
         """删除已完成的任务记录"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
                 cursor = conn.cursor()
 
                 # 先删除相关的医院信息记录（如果有外键关系）
@@ -1035,7 +1243,7 @@ class Database:
     async def cleanup_completed_tasks(self, older_than_hours: int = 1) -> int:
         """清理指定时间前已完成的任务"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
                 cursor = conn.cursor()
 
                 # 计算时间边界
@@ -1072,7 +1280,7 @@ class Database:
     async def clear_all_tables_data(self) -> bool:
         """清空所有表的数据，保留表结构"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
                 cursor = conn.cursor()
 
                 # 获取所有表名
