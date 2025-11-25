@@ -23,6 +23,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 from urllib.parse import unquote
 from typing import List, Optional
+import sys
 
 from db import init_db, get_db, clear_all_data, clear_all_tasks as db_clear_all_tasks
 from schemas import (
@@ -46,7 +47,9 @@ from schemas import (
     BatchUpdateRequest,
     BatchUpdateResponse,
     HospitalUpdateResult,
-    BatchUpdateProgress
+    BatchUpdateProgress,
+    ProcurementCrawlRequest,
+    ProcurementCrawlResponse,
 )
 
 # Define StandardResponse for consistency
@@ -64,6 +67,16 @@ class StandardResponse:
         }
 from tasks import TaskManager, execute_province_cities_districts_refresh_task, execute_all_provinces_cascade_refresh
 from llm_client import LLMClient
+from crawl import crawl_procurement_links
+
+# On Windows, use SelectorEventLoop so that asyncio subprocess APIs
+# (used by Playwright/crawl4ai) are available and avoid NotImplementedError.
+if sys.platform.startswith("win"):
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    except Exception:
+        # If policy cannot be set for some reason, ignore and rely on default.
+        pass
 
 # 配置日志 - 修复中文字符编码问题
 # 确保在添加处理器之前清除所有现有的处理器
@@ -2944,6 +2957,57 @@ async def execute_city_hospitals_refresh(task_id: str, city_info: dict, district
 
         # 重新抛出异常
         raise e
+
+
+@app.post(
+    "/procurement/crawl",
+    response_model=ProcurementCrawlResponse,
+    summary="爬取采购信息链接并写入数据库",
+    description="""
+从指定的 `base_url` 出发，使用 crawl4ai 深度爬取页面及其内部链接，
+并将结果写入 SQLite 数据库中的 `procurement_links` 表。
+
+逻辑完全复用 `crawl.py` 中的实现，仅将原来写死的 `base_url` 改为由接口参数传入。
+
+**注意：**
+- 该接口为实时执行，爬取过程可能需要数十秒，请在前端适当增加超时时间；
+- 同一个 `base_url` 多次爬取会复用数据库，并更新对应站点的链接记录。
+    """,
+    tags=["采购信息"],
+)
+async def crawl_procurement(request: ProcurementCrawlRequest) -> ProcurementCrawlResponse:
+    """
+    采购链接爬取接口：接收 base_url，调用 crawl.py 中的逻辑执行爬虫并写入数据库。
+    """
+    if not request.base_url or not request.base_url.strip():
+        raise HTTPException(status_code=400, detail="base_url 不能为空")
+
+    base_url = request.base_url.strip()
+
+    try:
+        result = await crawl_procurement_links(base_url)
+    except HTTPException:
+        # 透传已有 HTTP 异常
+        raise
+    except NotImplementedError as e:
+        # Windows Playwright async subprocess issue
+        logger.error(f"Windows Playwright subprocess 错误: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Windows 系统下爬虫启动失败，请联系管理员检查配置"
+        )
+    except Exception as e:
+        logger.error(f"采购链接爬取失败: {e}")
+        logger.error(f"错误类型: {type(e).__name__}")
+        logger.error(f"错误详情: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"爬取失败: {str(e)}")
+
+    return ProcurementCrawlResponse(
+        base_url=result.get("base_url", base_url),
+        total_urls=result.get("total_urls", 0),
+        new_or_updated=result.get("new_or_updated", 0),
+        db_path=result.get("db_path", ""),
+    )
 
 
 if __name__ == "__main__":

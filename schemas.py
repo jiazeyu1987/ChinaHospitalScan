@@ -317,3 +317,16 @@ class BatchUpdateResponse(BaseModel):
     total_time: Optional[float] = Field(None, description="总处理时间（秒）")
     request_id: str = Field(..., description="请求ID")
     timestamp: datetime = Field(default_factory=datetime.now, description="响应时间")
+
+
+class ProcurementCrawlRequest(BaseModel):
+    """采购链接爬取请求模型"""
+    base_url: str = Field(..., description="需要爬取的基础URL，例如：https://www.hospital-cqmu.com/gzb_cgxx")
+
+
+class ProcurementCrawlResponse(BaseModel):
+    """采购链接爬取响应模型"""
+    base_url: str = Field(..., description="本次爬取的基础URL")
+    total_urls: int = Field(..., description="本次采集到的唯一URL数量")
+    new_or_updated: int = Field(..., description="新增或更新的记录数量")
+    db_path: str = Field(..., description="写入数据的数据库文件路径")

@@ -19,3 +19,9 @@ python-dotenv==1.0.0
 
 # 进度条
 tqdm==4.66.1
+
+# Windows asyncio 兼容性
+nest-asyncio==1.6.0
+
+# HTML 解析（备用爬取方案）
+beautifulsoup4==4.12.2
