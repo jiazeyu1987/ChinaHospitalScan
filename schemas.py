@@ -322,6 +322,16 @@ class BatchUpdateResponse(BaseModel):
 class ProcurementCrawlRequest(BaseModel):
     """采购链接爬取请求模型"""
     base_url: str = Field(..., description="需要爬取的基础URL，例如：https://www.hospital-cqmu.com/gzb_cgxx")
+    max_depth: Optional[int] = Field(
+        None,
+        description="深度优先搜索的最大深度（对应 BFSDeepCrawlStrategy.max_depth，默认 5）",
+        ge=1
+    )
+    max_pages: Optional[int] = Field(
+        None,
+        description="最多爬取的页面数量（对应 BFSDeepCrawlStrategy.max_pages，默认 27）",
+        ge=1
+    )
 
 
 class ProcurementCrawlResponse(BaseModel):

@@ -2983,9 +2983,11 @@ async def crawl_procurement(request: ProcurementCrawlRequest) -> ProcurementCraw
         raise HTTPException(status_code=400, detail="base_url 不能为空")
 
     base_url = request.base_url.strip()
+    max_depth = request.max_depth
+    max_pages = request.max_pages
 
     try:
-        result = await crawl_procurement_links(base_url)
+        result = await crawl_procurement_links(base_url, max_depth=max_depth, max_pages=max_pages)
     except HTTPException:
         # 透传已有 HTTP 异常
         raise
