@@ -1053,6 +1053,65 @@ class Database:
                 }
             }
 
+    async def get_latest_procurement_links(self, base_url: str = None) -> dict:
+        """获取is_latest=1的采购链接记录
+
+        Args:
+            base_url: 可选的采购基础URL，如果为空则搜索所有is_latest=1的记录
+
+        Returns:
+            包含搜索结果的字典
+        """
+        try:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+                cursor = conn.cursor()
+
+                if base_url:
+                    # 搜索指定base_url且is_latest=1的记录
+                    cursor.execute("""
+                        SELECT id, base_url, url, link_text, first_seen_at, last_seen_at, is_latest
+                        FROM procurement_links
+                        WHERE base_url = ? AND is_latest = 1
+                        ORDER BY first_seen_at DESC
+                    """, (base_url,))
+                else:
+                    # 搜索所有is_latest=1的记录
+                    cursor.execute("""
+                        SELECT id, base_url, url, link_text, first_seen_at, last_seen_at, is_latest
+                        FROM procurement_links
+                        WHERE is_latest = 1
+                        ORDER BY first_seen_at DESC
+                    """)
+
+                rows = cursor.fetchall()
+
+                procurement_links = []
+                for row in rows:
+                    procurement_links.append({
+                        "id": row[0],
+                        "base_url": row[1],
+                        "url": row[2],
+                        "link_text": row[3],
+                        "first_seen_at": row[4],
+                        "last_seen_at": row[5],
+                        "is_latest": bool(row[6])
+                    })
+
+                return {
+                    "success": True,
+                    "message": f"成功获取 {len(procurement_links)} 条最新采购链接记录",
+                    "total_count": len(procurement_links),
+                    "procurement_links": procurement_links
+                }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"获取最新采购链接失败: {str(e)}",
+                "total_count": 0,
+                "procurement_links": []
+            }
+
     async def update_hospital(self, hospital_id: int, name: str = None, level: str = None,
                             address: str = None, phone: str = None, beds_count: int = None,
                             staff_count: int = None, departments: list = None,
@@ -1533,3 +1592,17 @@ async def search_procurement_links(base_url: str, time_start: str, time_end: str
     """
     db = await get_db()
     return await db.search_procurement_links(base_url, time_start, time_end)
+
+# 获取最新采购链接的方法
+async def get_latest_procurement_links(base_url: str = None) -> dict:
+    """
+    获取is_latest=1的采购链接记录
+
+    Args:
+        base_url: 可选的采购基础URL，如果为空则搜索所有is_latest=1的记录
+
+    Returns:
+        dict: 包含搜索结果和统计信息的字典
+    """
+    db = await get_db()
+    return await db.get_latest_procurement_links(base_url)

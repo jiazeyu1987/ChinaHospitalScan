@@ -29,7 +29,7 @@ import socket
 import subprocess
 import platform
 
-from db import init_db, get_db, clear_all_data, clear_all_tasks as db_clear_all_tasks, search_procurement_links
+from db import init_db, get_db, clear_all_data, clear_all_tasks as db_clear_all_tasks, search_procurement_links, get_latest_procurement_links
 from schemas import (
     ScanTaskRequest,
     ScanTaskResponse,
@@ -59,6 +59,8 @@ from schemas import (
     ProcurementSearchRequest,
     ProcurementSearchResponse,
     ProcurementLinkItem,
+    ProcurementLatestRequest,
+    ProcurementLatestResponse,
 )
 
 # Define StandardResponse for consistency
@@ -3308,6 +3310,77 @@ async def search_procurement_info(request: ProcurementSearchRequest) -> Procurem
         logger.error(f"采购信息搜索异常: request_id={request_id}, error={error_msg}")
 
         return ProcurementSearchResponse(
+            success=False,
+            message=error_msg,
+            total_count=0,
+            procurement_links=[],
+            search_params=request,
+            request_id=request_id
+        )
+
+
+@app.post("/procurement/latest",
+          response_model=ProcurementLatestResponse,
+          summary="获取最新采购信息",
+          description="获取is_latest为1的采购链接记录。如果base_url为空，则返回所有is_latest为1的记录；如果指定base_url，则返回指定base_url且is_latest为1的记录。")
+async def get_latest_procurement_info(request: ProcurementLatestRequest) -> ProcurementLatestResponse:
+    """获取最新采购信息"""
+    import uuid
+
+    # 生成请求ID
+    request_id = str(uuid.uuid4())
+
+    # 记录请求参数
+    if request.base_url:
+        logger.info(f"收到最新采购信息搜索请求: request_id={request_id}, base_url={request.base_url}")
+    else:
+        logger.info(f"收到最新采购信息搜索请求: request_id={request_id}, 搜索所有is_latest=1的记录")
+
+    try:
+        # 调用数据库查询函数
+        result = await get_latest_procurement_links(base_url=request.base_url)
+
+        if result["success"]:
+            logger.info(f"最新采购信息搜索成功: request_id={request_id}, 找到 {result['total_count']} 条记录")
+
+            # 转换为响应模型
+            procurement_link_items = []
+            for link in result["procurement_links"]:
+                procurement_link_items.append(ProcurementLinkItem(
+                    id=link["id"],
+                    base_url=link["base_url"],
+                    url=link["url"],
+                    link_text=link["link_text"],
+                    first_seen_at=link["first_seen_at"],
+                    last_seen_at=link["last_seen_at"],
+                    is_latest=link["is_latest"]
+                ))
+
+            return ProcurementLatestResponse(
+                success=True,
+                message=result["message"],
+                total_count=result["total_count"],
+                procurement_links=procurement_link_items,
+                search_params=request,
+                request_id=request_id
+            )
+        else:
+            logger.error(f"最新采购信息搜索失败: request_id={request_id}, error={result['message']}")
+
+            return ProcurementLatestResponse(
+                success=False,
+                message=result["message"],
+                total_count=0,
+                procurement_links=[],
+                search_params=request,
+                request_id=request_id
+            )
+
+    except Exception as e:
+        error_msg = f"获取最新采购信息时发生异常: {str(e)}"
+        logger.error(f"最新采购信息搜索异常: request_id={request_id}, error={error_msg}")
+
+        return ProcurementLatestResponse(
             success=False,
             message=error_msg,
             total_count=0,

@@ -384,3 +384,17 @@ class ProcurementSearchResponse(BaseModel):
     search_params: ProcurementSearchRequest = Field(..., description="搜索参数")
     request_id: str = Field(..., description="请求ID")
     timestamp: datetime = Field(default_factory=datetime.now, description="响应时间")
+
+class ProcurementLatestRequest(BaseModel):
+    """采购最新信息搜索请求模型"""
+    base_url: Optional[str] = Field(None, description="采购基础URL（可选，为空时搜索所有is_latest=1的记录）", example="http://www.procurement.example.com")
+
+class ProcurementLatestResponse(BaseModel):
+    """采购最新信息搜索响应模型"""
+    success: bool = Field(..., description="搜索是否成功")
+    message: str = Field(..., description="搜索结果描述")
+    total_count: int = Field(..., description="匹配的记录总数")
+    procurement_links: List[ProcurementLinkItem] = Field(..., description="采购链接列表（仅is_latest=1的记录）")
+    search_params: ProcurementLatestRequest = Field(..., description="搜索参数")
+    request_id: str = Field(..., description="请求ID")
+    timestamp: datetime = Field(default_factory=datetime.now, description="响应时间")
