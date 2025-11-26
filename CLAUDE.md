@@ -4,7 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-HBScan (医院层级扫查微服务) is a production-grade FastAPI microservice for automated hospital hierarchy scanning and data collection across China using Large Language Models (LLMs). The system implements a four-tier administrative data structure: provinces → cities → districts → hospitals, with advanced features including web crawling, batch operations, and concurrent task processing.
+HBScan (医院层级扫查微服务) is a full-stack application consisting of a production-grade FastAPI backend microservice and a Next.js frontend interface for automated hospital hierarchy scanning and data collection across China using Large Language Models (LLMs). The system implements a four-tier administrative data structure: provinces → cities → districts → hospitals, with advanced features including web crawling, batch operations, and concurrent task processing.
+
+### Project Structure
+- **Backend (this directory)**: FastAPI microservice on port 8000
+- **Frontend (../hospital-procurement-interface)**: Next.js application on port 3000
 
 ## Architecture
 
@@ -40,13 +44,33 @@ The TaskManager provides enterprise-grade task processing:
 ## Development Commands
 
 ### Quick Start
+
+#### Backend (Port 8000)
 ```bash
-# Start the service using the provided batch script (Windows)
+# Method 1: Direct start with automatic port management
+python main.py  # Automatically checks and frees port 8000
+
+# Method 2: Using the provided batch script (Windows)
 start_backend.bat
 
-# Manual startup with virtual environment
+# Method 3: Manual startup with virtual environment
 ../venv/Scripts/activate
 python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+#### Frontend (Port 3000) - Located at ../hospital-procurement-interface
+```bash
+# Navigate to frontend directory
+cd ../hospital-procurement-interface
+
+# Install dependencies (first time only)
+npm install
+
+# Start with automatic port management and browser opening
+npm run dev:auto
+
+# Alternative: Standard development mode
+npm run dev
 ```
 
 ### Environment Setup
@@ -73,7 +97,23 @@ curl -X GET "http://localhost:8000/health"
 ```
 
 ### Database Management
-The SQLite database auto-initializes at `data/hospital_scanner_new.db` with full schema creation. Supports switching to PostgreSQL via `DATABASE_URL` configuration.
+The SQLite database auto-initializes at `data/hospital_scanner.db` with full schema creation. Supports switching to PostgreSQL via `DATABASE_URL` configuration.
+
+### Port Management Features
+Both backend and frontend include automatic port management:
+
+#### Backend (Port 8000)
+- **Automatic Port Checking**: `python main.py` automatically detects and terminates processes using port 8000
+- **Cross-Platform Support**: Works on Windows, macOS, and Linux using psutil
+- **Safe Process Termination**: Graceful termination followed by force kill if needed
+- **Port Release Verification**: Confirms port is fully available before startup
+
+#### Frontend (Port 3000)
+- **Enhanced Development Scripts**: Located in `../hospital-procurement-interface/scripts/`
+  - `dev:auto`: Recommended script using `cross-port-killer` and `open` packages
+  - `dev:full`: Full-featured version using only Node.js built-ins
+- **Automatic Browser Opening**: Opens `http://localhost:3000` after server startup
+- **Cross-Platform Compatibility**: Windows (`start`), macOS (`open`), Linux (`xdg-open`)
 
 ## API Endpoints
 
@@ -226,6 +266,12 @@ Two-tier logging system with UTF-8 encoding:
 - **test_batch_update.py**: Comprehensive testing for hospital website batch updates
 - **Test Endpoints**: Built-in development endpoints for API route verification
 
+### Frontend Development Scripts
+Located at `../hospital-procurement-interface/scripts/`:
+- **dev-simple.js**: Recommended development script with automatic port management and browser opening
+- **dev-with-port-check.js**: Full-featured version with detailed logging and process management
+- **README.md**: Detailed usage instructions and troubleshooting guide
+
 ### Manual Testing Examples
 ```bash
 # Test website discovery for specific hospital
@@ -236,3 +282,31 @@ curl -X POST "http://localhost:8000/hospital/website" \
 # Trigger cascade refresh for specific province
 curl -X POST "http://localhost:8000/refresh/province-cities-districts/北京市"
 ```
+
+### Dependencies Management
+
+#### Backend Requirements
+Key dependencies in `requirements.txt`:
+- **psutil==5.9.6**: Added for automatic port management and process termination
+- FastAPI ecosystem: fastapi, uvicorn[standard], pydantic
+- HTTP clients: requests, httpx
+- Async support: aiofiles, nest-asyncio
+- LLM integration: All existing dependencies maintained
+
+#### Frontend Dependencies
+Key additions in `package.json`:
+- **cross-port-killer**: Cross-platform port management for Node.js
+- **open**: Cross-platform browser opening utility
+
+## Development Workflow
+
+### Full Stack Development
+1. **Start Backend**: `python main.py` (auto-manages port 8000)
+2. **Start Frontend**: `cd ../hospital-procurement-interface && npm run dev:auto` (auto-manages port 3000 and opens browser)
+3. **Access Application**: Frontend at `http://localhost:3000`, Backend API at `http://localhost:8000`
+
+### Port Conflict Resolution
+Both applications handle port conflicts automatically:
+- Backend uses psutil to detect and terminate processes on port 8000
+- Frontend uses cross-port-killer to manage port 3000
+- Both provide detailed logging of the port management process
