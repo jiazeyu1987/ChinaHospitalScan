@@ -5,7 +5,7 @@
 """
 
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
 from enum import Enum
 
@@ -332,6 +332,32 @@ class ProcurementCrawlRequest(BaseModel):
         description="最多爬取的页面数量（对应 BFSDeepCrawlStrategy.max_pages，默认 27）",
         ge=1
     )
+    keywords: Optional[List[str]] = Field(
+        default=None,
+        description="链接文本关键词列表。如果提供，只有link_text包含至少一个关键词的链接才会被存储。默认使用内置关键词：公告、采购、公开、招标、询价。支持中文关键词，如【公告】、【采购】、【中标】等。",
+        example=["公告", "采购", "中标"]
+    )
+
+    @field_validator('keywords')
+    @classmethod
+    def validate_keywords(cls, v):
+        if v is None:
+            return v
+
+        # 验证关键词数量
+        if len(v) > 20:
+            raise ValueError('关键词数量不能超过20个')
+
+        # 验证每个关键词
+        for i, keyword in enumerate(v):
+            if not keyword or not keyword.strip():
+                raise ValueError(f'关键词不能为空字符串（第{i+1}个关键词）')
+
+            keyword = keyword.strip()
+            if len(keyword) > 50:
+                raise ValueError(f'关键词长度不能超过50个字符（第{i+1}个关键词："{keyword}"）')
+
+        return [kw.strip() for kw in v]
 
 
 class ProcurementCrawlResponse(BaseModel):

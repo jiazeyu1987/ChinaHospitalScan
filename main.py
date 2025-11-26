@@ -11,7 +11,7 @@ try:
 except ImportError:
     pass
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import logging
@@ -3203,17 +3203,25 @@ async def execute_city_hospitals_refresh(task_id: str, city_info: dict, district
 从指定的 `base_url` 出发，使用 crawl4ai 深度爬取页面及其内部链接，
 并将结果写入 SQLite 数据库中的 `procurement_links` 表。
 
-逻辑完全复用 `crawl.py` 中的实现，仅将原来写死的 `base_url` 改为由接口参数传入。
+## 关键词过滤功能
+- **默认关键词**：如果不提供自定义关键词，系统将使用内置关键词进行过滤：公告、采购、公开、招标、询价
+- **自定义关键词**：可以提供自定义关键词列表，如【公告】、【采购】、【中标】、【结果】等
+- **过滤逻辑**：只有链接文本（link_text）包含至少一个指定关键词的链接才会被存储到数据库
+- **灵活配置**：支持中文关键词，可以根据具体医院网站的特点进行调整
 
 **注意：**
 - 该接口为实时执行，爬取过程可能需要数十秒，请在前端适当增加超时时间；
-- 同一个 `base_url` 多次爬取会复用数据库，并更新对应站点的链接记录。
+- 同一个 `base_url` 多次爬取会复用数据库，并更新对应站点的链接记录；
+- 关键词过滤有助于提高爬取精度，减少无关链接的存储。
     """,
     tags=["采购信息"],
 )
-async def crawl_procurement(request: ProcurementCrawlRequest) -> ProcurementCrawlResponse:
+async def crawl_procurement(
+    request: ProcurementCrawlRequest,
+) -> ProcurementCrawlResponse:
     """
     采购链接爬取接口：接收 base_url，调用 crawl.py 中的逻辑执行爬虫并写入数据库。
+    支持通过 request.keywords 参数传递自定义关键词，如果不提供则使用默认关键词。
     """
     if not request.base_url or not request.base_url.strip():
         raise HTTPException(status_code=400, detail="base_url 不能为空")
@@ -3221,9 +3229,15 @@ async def crawl_procurement(request: ProcurementCrawlRequest) -> ProcurementCraw
     base_url = request.base_url.strip()
     max_depth = request.max_depth
     max_pages = request.max_pages
+    keyword_list = request.keywords  # 使用请求体中的关键词参数
 
     try:
-        result = await crawl_procurement_links(base_url, max_depth=max_depth, max_pages=max_pages)
+        result = await crawl_procurement_links(
+            base_url,
+            max_depth=max_depth,
+            max_pages=max_pages,
+            keywords=keyword_list,
+        )
     except HTTPException:
         # 透传已有 HTTP 异常
         raise
