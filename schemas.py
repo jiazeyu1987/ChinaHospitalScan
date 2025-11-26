@@ -358,3 +358,29 @@ class BaseProcurementLinkResponse(BaseModel):
     updated: bool = Field(..., description="是否执行了更新操作")
     request_id: str = Field(..., description="请求ID")
     timestamp: datetime = Field(default_factory=datetime.now, description="响应时间")
+
+class ProcurementSearchRequest(BaseModel):
+    """采购信息搜索请求模型"""
+    base_url: str = Field(..., description="采购基础URL", example="http://www.procurement.example.com")
+    time_start: str = Field(..., description="开始时间 (YYYY-MM-DD 格式)", example="2024-01-01")
+    time_end: str = Field(..., description="结束时间 (YYYY-MM-DD 格式)", example="2024-12-31")
+
+class ProcurementLinkItem(BaseModel):
+    """采购链接项模型"""
+    id: int = Field(..., description="记录ID")
+    base_url: str = Field(..., description="采购基础URL")
+    url: str = Field(..., description="具体采购链接URL")
+    link_text: Optional[str] = Field(None, description="链接文本")
+    first_seen_at: str = Field(..., description="首次发现时间")
+    last_seen_at: Optional[str] = Field(None, description="最后更新时间")
+    is_latest: bool = Field(..., description="是否为最新记录")
+
+class ProcurementSearchResponse(BaseModel):
+    """采购信息搜索响应模型"""
+    success: bool = Field(..., description="搜索是否成功")
+    message: str = Field(..., description="搜索结果描述")
+    total_count: int = Field(..., description="匹配的记录总数")
+    procurement_links: List[ProcurementLinkItem] = Field(..., description="采购链接列表")
+    search_params: ProcurementSearchRequest = Field(..., description="搜索参数")
+    request_id: str = Field(..., description="请求ID")
+    timestamp: datetime = Field(default_factory=datetime.now, description="响应时间")

@@ -29,7 +29,7 @@ import socket
 import subprocess
 import platform
 
-from db import init_db, get_db, clear_all_data, clear_all_tasks as db_clear_all_tasks
+from db import init_db, get_db, clear_all_data, clear_all_tasks as db_clear_all_tasks, search_procurement_links
 from schemas import (
     ScanTaskRequest,
     ScanTaskResponse,
@@ -56,6 +56,9 @@ from schemas import (
     ProcurementCrawlResponse,
     BaseProcurementLinkRequest,
     BaseProcurementLinkResponse,
+    ProcurementSearchRequest,
+    ProcurementSearchResponse,
+    ProcurementLinkItem,
 )
 
 # Define StandardResponse for consistency
@@ -3241,6 +3244,77 @@ async def crawl_procurement(request: ProcurementCrawlRequest) -> ProcurementCraw
         new_or_updated=result.get("new_or_updated", 0),
         db_path=result.get("db_path", ""),
     )
+
+
+@app.post("/procurement/search",
+          response_model=ProcurementSearchResponse,
+          summary="搜索采购信息",
+          description="根据基础URL和时间范围搜索采购信息。支持base_url精确匹配和时间范围筛选。")
+async def search_procurement_info(request: ProcurementSearchRequest) -> ProcurementSearchResponse:
+    """搜索采购信息"""
+    import uuid
+
+    # 生成请求ID
+    request_id = str(uuid.uuid4())
+
+    logger.info(f"收到采购信息搜索请求: request_id={request_id}, base_url={request.base_url}, time_start={request.time_start}, time_end={request.time_end}")
+
+    try:
+        # 调用数据库搜索函数
+        result = await search_procurement_links(
+            base_url=request.base_url,
+            time_start=request.time_start,
+            time_end=request.time_end
+        )
+
+        if result["success"]:
+            logger.info(f"采购信息搜索成功: request_id={request_id}, 找到 {result['total_count']} 条记录")
+
+            # 转换为响应模型
+            procurement_link_items = []
+            for link in result["procurement_links"]:
+                procurement_link_items.append(ProcurementLinkItem(
+                    id=link["id"],
+                    base_url=link["base_url"],
+                    url=link["url"],
+                    link_text=link["link_text"],
+                    first_seen_at=link["first_seen_at"],
+                    last_seen_at=link["last_seen_at"],
+                    is_latest=link["is_latest"]
+                ))
+
+            return ProcurementSearchResponse(
+                success=True,
+                message=result["message"],
+                total_count=result["total_count"],
+                procurement_links=procurement_link_items,
+                search_params=request,
+                request_id=request_id
+            )
+        else:
+            logger.error(f"采购信息搜索失败: request_id={request_id}, error={result['message']}")
+
+            return ProcurementSearchResponse(
+                success=False,
+                message=result["message"],
+                total_count=0,
+                procurement_links=[],
+                search_params=request,
+                request_id=request_id
+            )
+
+    except Exception as e:
+        error_msg = f"搜索采购信息时发生异常: {str(e)}"
+        logger.error(f"采购信息搜索异常: request_id={request_id}, error={error_msg}")
+
+        return ProcurementSearchResponse(
+            success=False,
+            message=error_msg,
+            total_count=0,
+            procurement_links=[],
+            search_params=request,
+            request_id=request_id
+        )
 
 
 if __name__ == "__main__":

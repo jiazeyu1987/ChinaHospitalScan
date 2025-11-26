@@ -981,6 +981,78 @@ class Database:
                 "affected_rows": 0
             }
 
+    async def search_procurement_links(self, base_url: str, time_start: str, time_end: str) -> dict:
+        """
+        搜索采购信息
+
+        Args:
+            base_url: 采购基础URL
+            time_start: 开始时间 (YYYY-MM-DD 格式)
+            time_end: 结束时间 (YYYY-MM-DD 格式)
+
+        Returns:
+            dict: 包含搜索结果和统计信息的字典
+        """
+        try:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+                cursor = conn.cursor()
+
+                # 查询采购链接
+                cursor.execute("""
+                    SELECT id, base_url, url, link_text, first_seen_at, last_seen_at, is_latest
+                    FROM procurement_links
+                    WHERE base_url = ?
+                    AND DATE(first_seen_at) >= DATE(?)
+                    AND DATE(first_seen_at) <= DATE(?)
+                    ORDER BY first_seen_at DESC
+                """, (base_url, time_start, time_end))
+
+                rows = cursor.fetchall()
+
+                # 转换为字典列表
+                procurement_links = []
+                for row in rows:
+                    procurement_links.append({
+                        "id": row[0],
+                        "base_url": row[1],
+                        "url": row[2],
+                        "link_text": row[3],
+                        "first_seen_at": row[4],
+                        "last_seen_at": row[5],
+                        "is_latest": bool(row[6])
+                    })
+
+                total_count = len(procurement_links)
+
+                logger.info(f"采购链接搜索完成: base_url={base_url}, time_start={time_start}, time_end={time_end}, 找到 {total_count} 条记录")
+
+                return {
+                    "success": True,
+                    "message": f"搜索完成，找到 {total_count} 条匹配记录",
+                    "total_count": total_count,
+                    "procurement_links": procurement_links,
+                    "search_params": {
+                        "base_url": base_url,
+                        "time_start": time_start,
+                        "time_end": time_end
+                    }
+                }
+
+        except Exception as e:
+            error_msg = f"搜索采购链接失败: {e}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "message": error_msg,
+                "total_count": 0,
+                "procurement_links": [],
+                "search_params": {
+                    "base_url": base_url,
+                    "time_start": time_start,
+                    "time_end": time_end
+                }
+            }
+
     async def update_hospital(self, hospital_id: int, name: str = None, level: str = None,
                             address: str = None, phone: str = None, beds_count: int = None,
                             staff_count: int = None, departments: list = None,
@@ -1445,3 +1517,19 @@ async def clear_all_tasks():
     """删除所有任务记录"""
     db = await get_db()
     return await db.clear_all_tasks()
+
+# 搜索采购信息的方法
+async def search_procurement_links(base_url: str, time_start: str, time_end: str) -> dict:
+    """
+    搜索采购信息
+
+    Args:
+        base_url: 采购基础URL
+        time_start: 开始时间 (YYYY-MM-DD 格式)
+        time_end: 结束时间 (YYYY-MM-DD 格式)
+
+    Returns:
+        dict: 包含搜索结果和统计信息的字典
+    """
+    db = await get_db()
+    return await db.search_procurement_links(base_url, time_start, time_end)
