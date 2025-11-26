@@ -24,6 +24,10 @@ from contextlib import asynccontextmanager
 from urllib.parse import unquote
 from typing import List, Optional
 import sys
+import psutil
+import socket
+import subprocess
+import platform
 
 from db import init_db, get_db, clear_all_data, clear_all_tasks as db_clear_all_tasks
 from schemas import (
@@ -123,6 +127,106 @@ llm_logger.addHandler(llm_handler)
 logging.getLogger('uvicorn').setLevel(logging.WARNING)
 logging.getLogger('watchfiles').setLevel(logging.WARNING)
 logging.getLogger('uvicorn.access').setLevel(logging.WARNING)
+
+
+def check_and_close_port(port: int) -> bool:
+    """
+    检查并关闭指定端口的进程
+
+    Args:
+        port: 要检查和关闭的端口号
+
+    Returns:
+        bool: 如果端口被成功清理返回True，否则返回False
+    """
+    try:
+        # 检查端口是否被占用
+        for conn in psutil.net_connections():
+            if conn.laddr.port == port and conn.status == 'LISTEN':
+                pid = conn.pid
+                if pid:
+                    try:
+                        process = psutil.Process(pid)
+                        process_name = process.name()
+                        logger.info(f"发现端口 {port} 被进程 {pid} ({process_name}) 占用，正在终止...")
+
+                        # 强制终止进程
+                        process.terminate()
+
+                        # 等待进程结束
+                        try:
+                            process.wait(timeout=5)
+                            logger.info(f"成功终止进程 {pid} ({process_name})")
+                        except psutil.TimeoutExpired:
+                            # 如果正常终止失败，强制杀死
+                            process.kill()
+                            logger.info(f"强制杀死进程 {pid} ({process_name})")
+
+                        return True
+                    except psutil.NoSuchProcess:
+                        logger.warning(f"进程 {pid} 不存在")
+                    except psutil.AccessDenied:
+                        logger.warning(f"没有权限终止进程 {pid}")
+                        # 尝试使用系统命令
+                        try:
+                            system = platform.system().lower()
+                            if system == 'windows':
+                                subprocess.run(['taskkill', '/F', '/PID', str(pid)],
+                                             check=True, capture_output=True)
+                            else:
+                                subprocess.run(['kill', '-9', str(pid)],
+                                             check=True, capture_output=True)
+                            logger.info(f"使用系统命令成功终止进程 {pid}")
+                            return True
+                        except subprocess.CalledProcessError as e:
+                            logger.error(f"使用系统命令终止进程 {pid} 失败: {e}")
+                    except Exception as e:
+                        logger.error(f"终止进程 {pid} 时发生错误: {e}")
+                else:
+                    logger.warning(f"端口 {port} 被占用但无法获取进程ID")
+        else:
+            logger.info(f"端口 {port} 当前未被占用")
+            return True
+
+    except Exception as e:
+        logger.error(f"检查端口 {port} 时发生错误: {e}")
+
+    return False
+
+
+def wait_for_port_free(port: int, timeout: int = 10) -> bool:
+    """
+    等待端口释放
+
+    Args:
+        port: 要等待释放的端口号
+        timeout: 等待超时时间（秒）
+
+    Returns:
+        bool: 如果端口在超时前释放返回True，否则返回False
+    """
+    import time
+
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            # 尝试连接端口，如果连接失败说明端口已释放
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(1)
+                result = sock.connect_ex(('localhost', port))
+                if result != 0:  # 连接失败，端口已释放
+                    logger.info(f"确认端口 {port} 已释放")
+                    return True
+        except Exception:
+            # 连接失败，端口已释放
+            logger.info(f"确认端口 {port} 已释放")
+            return True
+
+        logger.info(f"等待端口 {port} 释放...")
+        time.sleep(1)
+
+    logger.warning(f"等待端口 {port} 释放超时")
+    return False
 
 # 任务管理器
 task_manager = TaskManager()
@@ -3013,11 +3117,27 @@ async def crawl_procurement(request: ProcurementCrawlRequest) -> ProcurementCraw
 
 
 if __name__ == "__main__":
+    # 在启动服务前检查并关闭8000端口
+    logger.info("🚀 准备启动HBScan服务...")
+
+    target_port = 8000
+    if check_and_close_port(target_port):
+        logger.info(f"✅ 端口 {target_port} 检查完成")
+
+        # 等待端口完全释放
+        if wait_for_port_free(target_port, timeout=10):
+            logger.info(f"🎉 端口 {target_port} 已准备好，开始启动服务...")
+        else:
+            logger.warning(f"⚠️ 端口 {target_port} 可能仍在占用中，尝试启动服务...")
+    else:
+        logger.warning(f"⚠️ 端口 {target_port} 检查时出现问题，但仍尝试启动服务...")
+
+    # 启动FastAPI服务
+    logger.info(f"🌟 在端口 {target_port} 启动FastAPI服务...")
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
+        port=target_port,
         reload=True,
         log_level="info"
     )
-# 强制重新加载 Sun, Nov 23, 2025 12:49:44 PM
