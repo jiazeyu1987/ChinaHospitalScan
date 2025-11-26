@@ -184,6 +184,7 @@ class Database:
                         departments TEXT,
                         specializations TEXT,
                         base_procurement_link TEXT,
+                        procurement_keywords TEXT,
                         created_at TEXT NOT NULL,
                         updated_at TEXT NOT NULL,
                         FOREIGN KEY (district_id) REFERENCES districts (id)
@@ -209,6 +210,14 @@ class Database:
                 except Exception as e:
                     # 字段可能已存在，忽略错误
                     logger.debug(f"base_procurement_link column may already exist: {e}")
+
+                # 为现有数据库添加procurement_keywords字段（如果不存在）
+                try:
+                    cursor.execute("ALTER TABLE hospitals ADD COLUMN procurement_keywords TEXT")
+                    logger.info("Added procurement_keywords column to hospitals table")
+                except Exception as e:
+                    # 字段可能已存在，忽略错误
+                    logger.debug(f"procurement_keywords column may already exist: {e}")
 
                 conn.commit()
                 logger.info("数据库初始化完成")
@@ -981,6 +990,251 @@ class Database:
                 "affected_rows": 0
             }
 
+    async def update_hospital_keywords(self, hospital_id: int, keywords: list) -> dict:
+        """
+        更新医院个性化采购关键词
+
+        Args:
+            hospital_id: 医院ID
+            keywords: 关键词列表，空列表表示重置为默认关键词
+
+        Returns:
+            dict: 更新结果
+        """
+        try:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+                cursor = conn.cursor()
+
+                # 将关键词列表转换为逗号分隔的字符串
+                keywords_str = ",".join(keywords) if keywords else None
+
+                # 更新关键词和更新时间
+                cursor.execute("""
+                    UPDATE hospitals
+                    SET procurement_keywords = ?, updated_at = ?
+                    WHERE id = ?
+                """, (keywords_str, datetime.now().isoformat(), hospital_id))
+
+                affected_rows = cursor.rowcount
+                conn.commit()
+
+                if affected_rows > 0:
+                    logger.info(f"医院关键词更新成功: ID={hospital_id}, keywords={keywords}")
+                    return {
+                        "success": True,
+                        "message": "医院关键词更新成功",
+                        "hospital_id": hospital_id,
+                        "keywords": keywords,
+                        "keywords_str": keywords_str,
+                        "affected_rows": affected_rows
+                    }
+                else:
+                    error_msg = f"未找到医院ID: {hospital_id}"
+                    logger.warning(error_msg)
+                    return {
+                        "success": False,
+                        "message": error_msg,
+                        "hospital_id": hospital_id,
+                        "keywords": keywords,
+                        "affected_rows": 0
+                    }
+
+        except Exception as e:
+            error_msg = f"更新医院关键词失败: {e}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "message": error_msg,
+                "hospital_id": hospital_id,
+                "keywords": keywords,
+                "affected_rows": 0
+            }
+
+    async def get_hospital_keywords(self, hospital_id: int, default_keywords: list = None) -> dict:
+        """
+        获取医院采购关键词
+
+        Args:
+            hospital_id: 医院ID
+            default_keywords: 系统默认关键词列表
+
+        Returns:
+            dict: 关键词信息
+        """
+        try:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+                cursor = conn.cursor()
+
+                # 查询医院信息
+                cursor.execute("""
+                    SELECT id, name, procurement_keywords
+                    FROM hospitals
+                    WHERE id = ?
+                """, (hospital_id,))
+
+                result = cursor.fetchone()
+
+                if not result:
+                    return {
+                        "success": False,
+                        "message": f"未找到医院ID: {hospital_id}",
+                        "hospital_id": hospital_id,
+                        "hospital_name": None,
+                        "keywords": default_keywords or [],
+                        "is_custom": False,
+                        "default_keywords": default_keywords or []
+                    }
+
+                hospital_id_db, hospital_name, keywords_str = result
+
+                # 解析关键词字符串
+                if keywords_str and keywords_str.strip():
+                    keywords = [kw.strip() for kw in keywords_str.split(",") if kw.strip()]
+                    is_custom = True
+                else:
+                    keywords = default_keywords or []
+                    is_custom = False
+
+                return {
+                    "success": True,
+                    "message": "获取医院关键词成功",
+                    "hospital_id": hospital_id_db,
+                    "hospital_name": hospital_name,
+                    "keywords": keywords,
+                    "is_custom": is_custom,
+                    "default_keywords": default_keywords or [],
+                    "keywords_str": keywords_str
+                }
+
+        except Exception as e:
+            error_msg = f"获取医院关键词失败: {e}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "message": error_msg,
+                "hospital_id": hospital_id,
+                "hospital_name": None,
+                "keywords": default_keywords or [],
+                "is_custom": False,
+                "default_keywords": default_keywords or []
+            }
+
+    async def reset_hospital_keywords(self, hospital_id: int) -> dict:
+        """
+        重置医院关键词为默认值
+
+        Args:
+            hospital_id: 医院ID
+
+        Returns:
+            dict: 重置结果
+        """
+        try:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+                cursor = conn.cursor()
+
+                # 清空关键词（设置为NULL）
+                cursor.execute("""
+                    UPDATE hospitals
+                    SET procurement_keywords = NULL, updated_at = ?
+                    WHERE id = ?
+                """, (datetime.now().isoformat(), hospital_id))
+
+                affected_rows = cursor.rowcount
+                conn.commit()
+
+                if affected_rows > 0:
+                    logger.info(f"医院关键词重置成功: ID={hospital_id}")
+                    return {
+                        "success": True,
+                        "message": "医院关键词重置成功",
+                        "hospital_id": hospital_id,
+                        "affected_rows": affected_rows
+                    }
+                else:
+                    error_msg = f"未找到医院ID: {hospital_id}"
+                    logger.warning(error_msg)
+                    return {
+                        "success": False,
+                        "message": error_msg,
+                        "hospital_id": hospital_id,
+                        "affected_rows": 0
+                    }
+
+        except Exception as e:
+            error_msg = f"重置医院关键词失败: {e}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "message": error_msg,
+                "hospital_id": hospital_id,
+                "affected_rows": 0
+            }
+
+    async def get_hospital_with_keywords(self, hospital_id: int, default_keywords: list = None) -> dict:
+        """
+        获取医院完整信息（包含关键词）
+
+        Args:
+            hospital_id: 医院ID
+            default_keywords: 系统默认关键词列表
+
+        Returns:
+            dict: 医院完整信息
+        """
+        try:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+                cursor = conn.cursor()
+
+                # 查询医院完整信息
+                cursor.execute("""
+                    SELECT * FROM hospitals
+                    WHERE id = ?
+                """, (hospital_id,))
+
+                result = cursor.fetchone()
+
+                if not result:
+                    return {
+                        "success": False,
+                        "message": f"未找到医院ID: {hospital_id}",
+                        "hospital": None
+                    }
+
+                # 获取列名
+                columns = [desc[0] for desc in cursor.description]
+
+                # 构建医院信息字典
+                hospital_info = dict(zip(columns, result))
+
+                # 处理关键词
+                keywords_str = hospital_info.get("procurement_keywords")
+                if keywords_str and keywords_str.strip():
+                    keywords = [kw.strip() for kw in keywords_str.split(",") if kw.strip()]
+                    is_custom = True
+                else:
+                    keywords = default_keywords or []
+                    is_custom = False
+
+                hospital_info["effective_keywords"] = keywords
+                hospital_info["is_custom_keywords"] = is_custom
+                hospital_info["default_keywords"] = default_keywords or []
+
+                return {
+                    "success": True,
+                    "message": "获取医院信息成功",
+                    "hospital": hospital_info
+                }
+
+        except Exception as e:
+            error_msg = f"获取医院信息失败: {e}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "message": error_msg,
+                "hospital": None
+            }
+
     async def search_procurement_links(self, base_url: str, time_start: str, time_end: str) -> dict:
         """
         搜索采购信息
@@ -1548,6 +1802,59 @@ class Database:
         except Exception as e:
             logger.error(f"清空数据库失败: {e}")
             return False
+
+    async def get_hospital_by_id(self, hospital_id: int) -> dict:
+        """
+        根据ID获取医院基本信息
+
+        Args:
+            hospital_id: 医院ID
+
+        Returns:
+            dict: 医院信息字典，如果未找到则返回None
+        """
+        request_id = f"DB-{uuid.uuid4().hex[:8]}"
+        logger.info(f"[{request_id}] 数据库查询开始: get_hospital_by_id")
+        logger.info(f"[{request_id}] 参数: hospital_id={hospital_id}")
+
+        try:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+                cursor = conn.cursor()
+
+                # 查询医院基本信息
+                cursor.execute("""
+                    SELECT id, name, level, district_id, address, phone, website
+                    FROM hospitals
+                    WHERE id = ?
+                    LIMIT 1
+                """, (hospital_id,))
+
+                result = cursor.fetchone()
+
+                if result:
+                    hospital_info = {
+                        "id": result[0],
+                        "name": result[1],
+                        "level": result[2],
+                        "district_id": result[3],
+                        "address": result[4],
+                        "phone": result[5],
+                        "website": result[6]
+                    }
+
+                    logger.info(f"[{request_id}] 查询成功: 找到医院 '{hospital_info['name']}' (ID: {hospital_id})")
+                    return hospital_info
+                else:
+                    logger.warning(f"[{request_id}] 未找到医院ID: {hospital_id}")
+                    return None
+
+        except Exception as e:
+            error_msg = f"根据ID查找医院失败: {str(e)}"
+            logger.error(f"[{request_id}] 数据库异常: {error_msg}")
+            logger.error(f"[{request_id}] 异常详情: {type(e).__name__}: {str(e)}")
+            import traceback
+            logger.error(f"[{request_id}] 异常堆栈: {traceback.format_exc()}")
+            return None
 
 # 全局数据库实例
 _db_instance = None

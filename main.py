@@ -61,6 +61,9 @@ from schemas import (
     ProcurementLinkItem,
     ProcurementLatestRequest,
     ProcurementLatestResponse,
+    HospitalKeywordsRequest,
+    HospitalKeywordsResponse,
+    HospitalKeywordsDeleteRequest,
 )
 
 # Define StandardResponse for consistency
@@ -1415,6 +1418,317 @@ async def set_hospital_base_procurement_link(request: BaseProcurementLinkRequest
         total_time = time.time() - start_time
         error_msg = f"设置基础采购链接时发生未知错误: {str(e)}"
         logger.error(f"[{request_id}] {error_msg}，总耗时: {total_time:.3f}s")
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+@app.post("/hospital/{hospital_id}/keywords",
+          response_model=HospitalKeywordsResponse,
+          summary="设置医院个性化采购关键词",
+          description="""
+为指定医院设置个性化的采购关键词。
+
+**功能特性**：
+- 🏥 为医院设置专属的采购关键词
+- 🔄 支持增删改关键词操作
+- 📝 自动关键词去重和验证
+- 🗄️ 关键词存储到数据库
+- 📊 提供详细的设置结果日志
+
+**参数说明**：
+- hospital_id: 医院ID（路径参数）
+- keywords: 关键词列表，空列表表示重置为默认关键词
+
+**关键词规则**：
+- 数量限制：不超过50个关键词
+- 长度限制：每个关键词不超过100个字符
+- 自动去重：重复的关键词会被自动去除
+- 空值过滤：空字符串会被自动过滤
+
+**返回数据**：
+- success: 操作是否成功
+- message: 操作结果描述
+- hospital_id: 医院ID
+- hospital_name: 医院名称
+- keywords: 当前关键词列表
+- is_custom: 是否为个性化设置
+- default_keywords: 系统默认关键词列表
+- request_id: 唯一请求ID，用于日志追踪
+- timestamp: 响应时间戳
+
+**使用示例**：
+```json
+{
+  "hospital_id": 123,
+  "keywords": ["公告", "采购", "医疗设备招标", "药品采购"]
+}
+```
+""",
+    tags=["医院管理"])
+async def set_hospital_keywords(
+    hospital_id: int,
+    request: HospitalKeywordsRequest
+) -> HospitalKeywordsResponse:
+    """
+    设置医院个性化采购关键词接口：为指定医院设置专属的采购关键词。
+    """
+    import uuid
+    import time
+
+    request_id = str(uuid.uuid4())
+    start_time = time.time()
+
+    logger.info(f"[{request_id}] 开始设置医院关键词")
+    logger.info(f"[{request_id}] 参数: hospital_id={hospital_id}, keywords={request.keywords}")
+
+    try:
+        # 获取数据库连接
+        db = await get_db()
+
+        # 验证医院ID存在
+        hospital_info = await db.get_hospital_by_id(hospital_id)
+        if not hospital_info:
+            raise HTTPException(
+                status_code=404,
+                detail=f"未找到医院ID: {hospital_id}"
+            )
+
+        hospital_name = hospital_info["name"]
+        logger.info(f"[{request_id}] 找到医院: {hospital_name}")
+
+        # 设置默认关键词
+        default_keywords = ["公告", "采购", "公开", "招标", "询价"]
+
+        # 更新医院关键词
+        update_start_time = time.time()
+        update_result = await db.update_hospital_keywords(hospital_id, request.keywords)
+        update_time = time.time() - update_start_time
+
+        if update_result["success"]:
+            logger.info(f"[{request_id}] 关键词更新成功，耗时: {update_time:.3f}s")
+            logger.info(f"[{request_id}] 设置的关键词: {request.keywords}")
+
+            # 获取更新后的关键词信息
+            keywords_info = await db.get_hospital_keywords(hospital_id, default_keywords)
+
+            total_time = time.time() - start_time
+            logger.info(f"[{request_id}] 设置完成，总耗时: {total_time:.3f}s")
+
+            return HospitalKeywordsResponse(
+                success=True,
+                message="医院关键词设置成功",
+                hospital_id=hospital_id,
+                hospital_name=hospital_name,
+                keywords=keywords_info["keywords"],
+                is_custom=keywords_info["is_custom"],
+                default_keywords=default_keywords,
+                request_id=request_id,
+                timestamp=datetime.now()
+            )
+        else:
+            error_msg = f"数据库更新失败: {update_result.get('message', '未知错误')}"
+            logger.error(f"[{request_id}] {error_msg}")
+            raise HTTPException(status_code=500, detail=error_msg)
+
+    except HTTPException:
+        # 重新抛出HTTP异常
+        total_time = time.time() - start_time
+        logger.error(f"[{request_id}] HTTP异常: 总耗时={total_time:.3f}s")
+        raise
+    except Exception as e:
+        total_time = time.time() - start_time
+        error_msg = f"设置医院关键词时发生未知错误: {str(e)}"
+        logger.error(f"[{request_id}] {error_msg}，总耗时: {total_time:.3f}s")
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+@app.get("/hospital/{hospital_id}/keywords",
+         response_model=HospitalKeywordsResponse,
+         summary="获取医院采购关键词",
+         description="""
+获取指定医院的采购关键词信息。
+
+**功能特性**：
+- 🔍 查询医院个性化关键词设置
+- 📊 显示关键词来源（自定义/默认）
+- 📝 返回当前有效关键词列表
+- 🔄 返回系统默认关键词列表
+
+**参数说明**：
+- hospital_id: 医院ID（路径参数）
+
+**返回数据**：
+- success: 操作是否成功
+- message: 操作结果描述
+- hospital_id: 医院ID
+- hospital_name: 医院名称
+- keywords: 当前有效关键词列表
+- is_custom: 是否为个性化设置
+- default_keywords: 系统默认关键词列表
+- request_id: 唯一请求ID，用于日志追踪
+- timestamp: 响应时间戳
+
+**关键词优先级**：
+- 如果医院设置了个性化关键词，返回医院的关键词（is_custom=true）
+- 如果医院未设置个性化关键词，返回系统默认关键词（is_custom=false）
+""",
+    tags=["医院管理"])
+async def get_hospital_keywords(hospital_id: int) -> HospitalKeywordsResponse:
+    """
+    获取医院采购关键词接口：查询医院的个性化关键词设置。
+    """
+    import uuid
+    import time
+
+    request_id = str(uuid.uuid4())
+    start_time = time.time()
+
+    logger.info(f"[{request_id}] 开始获取医院关键词")
+    logger.info(f"[{request_id}] 参数: hospital_id={hospital_id}")
+
+    try:
+        # 获取数据库连接
+        db = await get_db()
+
+        # 设置默认关键词
+        default_keywords = ["公告", "采购", "公开", "招标", "询价"]
+
+        # 获取医院关键词信息
+        keywords_info = await db.get_hospital_keywords(hospital_id, default_keywords)
+
+        total_time = time.time() - start_time
+
+        if keywords_info["success"]:
+            logger.info(f"[{request_id}] 获取成功，耗时: {total_time:.3f}s")
+            logger.info(f"[{request_id}] 关键词数量: {len(keywords_info['keywords'])}")
+            logger.info(f"[{request_id}] 是否自定义: {keywords_info['is_custom']}")
+
+            return HospitalKeywordsResponse(
+                success=True,
+                message="获取医院关键词成功",
+                hospital_id=hospital_id,
+                hospital_name=keywords_info["hospital_name"] or "未知医院",
+                keywords=keywords_info["keywords"],
+                is_custom=keywords_info["is_custom"],
+                default_keywords=default_keywords,
+                request_id=request_id,
+                timestamp=datetime.now()
+            )
+        else:
+            error_msg = keywords_info["message"]
+            logger.error(f"[{request_id}] {error_msg}")
+            raise HTTPException(
+                status_code=404,
+                detail=error_msg
+            )
+
+    except HTTPException:
+        # 重新抛出HTTP异常
+        total_time = time.time() - start_time
+        logger.error(f"[{request_id}] HTTP异常: 总耗时={total_time:.3f}s")
+        raise
+    except Exception as e:
+        total_time = time.time() - start_time
+        error_msg = f"获取医院关键词时发生未知错误: {str(e)}"
+        logger.error(f"[{request_id}] {error_msg}，总耗时={total_time:.3f}s")
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+@app.delete("/hospital/{hospital_id}/keywords",
+            response_model=HospitalKeywordsResponse,
+            summary="重置医院关键词为默认值",
+            description="""
+将指定医院的关键词重置为系统默认值。
+
+**功能特性**：
+- 🔄 重置医院个性化关键词设置
+- 🗑️ 清空医院自定义关键词
+- 📝 重置后使用系统默认关键词
+- 📊 提供详细的操作结果日志
+
+**参数说明**：
+- hospital_id: 医院ID（路径参数）
+
+**返回数据**：
+- success: 操作是否成功
+- message: 操作结果描述
+- hospital_id: 医院ID
+- hospital_name: 医院名称
+- keywords: 重置后的关键词列表（系统默认）
+- is_custom: 重置后为false（使用默认关键词）
+- default_keywords: 系统默认关键词列表
+- request_id: 唯一请求ID，用于日志追踪
+- timestamp: 响应时间戳
+
+**系统默认关键词**：["公告", "采购", "公开", "招标", "询价"]
+""",
+    tags=["医院管理"])
+async def reset_hospital_keywords(hospital_id: int) -> HospitalKeywordsResponse:
+    """
+    重置医院关键词为默认值接口：清空医院的个性化关键词设置。
+    """
+    import uuid
+    import time
+
+    request_id = str(uuid.uuid4())
+    start_time = time.time()
+
+    logger.info(f"[{request_id}] 开始重置医院关键词")
+    logger.info(f"[{request_id}] 参数: hospital_id={hospital_id}")
+
+    try:
+        # 获取数据库连接
+        db = await get_db()
+
+        # 验证医院ID存在
+        hospital_info = await db.get_hospital_by_id(hospital_id)
+        if not hospital_info:
+            raise HTTPException(
+                status_code=404,
+                detail=f"未找到医院ID: {hospital_id}"
+            )
+
+        hospital_name = hospital_info["name"]
+        logger.info(f"[{request_id}] 找到医院: {hospital_name}")
+
+        # 设置默认关键词
+        default_keywords = ["公告", "采购", "公开", "招标", "询价"]
+
+        # 重置医院关键词
+        reset_start_time = time.time()
+        reset_result = await db.reset_hospital_keywords(hospital_id)
+        reset_time = time.time() - reset_start_time
+
+        if reset_result["success"]:
+            logger.info(f"[{request_id}] 关键词重置成功，耗时: {reset_time:.3f}s")
+
+            total_time = time.time() - start_time
+            logger.info(f"[{request_id}] 重置完成，总耗时: {total_time:.3f}s")
+
+            return HospitalKeywordsResponse(
+                success=True,
+                message="医院关键词重置成功，已恢复为默认关键词",
+                hospital_id=hospital_id,
+                hospital_name=hospital_name,
+                keywords=default_keywords,
+                is_custom=False,
+                default_keywords=default_keywords,
+                request_id=request_id,
+                timestamp=datetime.now()
+            )
+        else:
+            error_msg = f"数据库重置失败: {reset_result.get('message', '未知错误')}"
+            logger.error(f"[{request_id}] {error_msg}")
+            raise HTTPException(status_code=500, detail=error_msg)
+
+    except HTTPException:
+        # 重新抛出HTTP异常
+        total_time = time.time() - start_time
+        logger.error(f"[{request_id}] HTTP异常: 总耗时={total_time:.3f}s")
+        raise
+    except Exception as e:
+        total_time = time.time() - start_time
+        error_msg = f"重置医院关键词时发生未知错误: {str(e)}"
+        logger.error(f"[{request_id}] {error_msg}，总耗时={total_time:.3f}s")
         raise HTTPException(status_code=500, detail=error_msg)
 
 
@@ -3223,36 +3537,150 @@ async def crawl_procurement(
     采购链接爬取接口：接收 base_url，调用 crawl.py 中的逻辑执行爬虫并写入数据库。
     支持通过 request.keywords 参数传递自定义关键词，如果不提供则使用默认关键词。
     """
+    # 生成请求ID用于跟踪
+    request_id = str(uuid.uuid4())
+
+    # 使用结构化日志记录所有传入参数
+    logger.info("=" * 80)
+    logger.info(f"🚀 [PROCUREMENT CRAWL] 接收到采购信息爬取请求")
+    logger.info(f"📋 请求ID: {request_id}")
+    logger.info(f"⏰ 请求时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info("-" * 80)
+
+    # 记录所有传入参数
+    logger.info(f"🔗 基础URL (base_url): '{request.base_url}'")
+    logger.info(f"📏 最大深度 (max_depth): {request.max_depth}")
+    logger.info(f"📄 最大页面数 (max_pages): {request.max_pages}")
+    logger.info(f"🏥 医院ID (hospital_id): {request.hospital_id}")
+    logger.info(f"🏷️ 关键词列表 (keywords): {request.keywords}")
+    logger.info(f"📊 关键词数量: {len(request.keywords) if request.keywords else 0}")
+
+    # 详细记录关键词信息
+    if request.keywords:
+        logger.info("📝 请求参数关键词信息:")
+        for i, keyword in enumerate(request.keywords, 1):
+            keyword_clean = keyword.strip() if keyword else ""
+            keyword_length = len(keyword_clean)
+            logger.info(f"   - 关键词 {i:2d}: '{keyword_clean}' (长度: {keyword_length})")
+    else:
+        logger.info("📝 请求参数关键词: 未提供自定义关键词")
+
+    # 记录医院ID信息
+    if request.hospital_id:
+        logger.info(f"🏥 医院ID说明: 提供了医院ID {request.hospital_id}，系统将优先检查该医院的个性化关键词设置")
+    else:
+        logger.info("🏥 医院ID说明: 未提供医院ID，将使用请求参数关键词或系统默认关键词")
+
+    # 记录请求的完整数据结构（用于调试）
+    logger.debug(f"🔍 完整请求数据: {request.model_dump()}")
+    logger.info("=" * 80)
+
     if not request.base_url or not request.base_url.strip():
+        logger.error(f"❌ [PROCUREMENT CRAWL][{request_id}] 参数验证失败: base_url 不能为空")
         raise HTTPException(status_code=400, detail="base_url 不能为空")
 
     base_url = request.base_url.strip()
     max_depth = request.max_depth
     max_pages = request.max_pages
-    keyword_list = request.keywords  # 使用请求体中的关键词参数
+    hospital_id = request.hospital_id
+    default_keywords = ["公告", "采购", "公开", "招标", "询价"]
+
+    # 关键词优先级处理
+    final_keywords = None
+    keywords_source = "请求参数"
+
+    # 获取数据库连接
+    db = await get_db()
+
+    if hospital_id:
+        logger.info(f"🏥 [PROCUREMENT CRAWL][{request_id}] 检测到医院ID: {hospital_id}")
+        # 获取医院个性化关键词
+        hospital_keywords_info = await db.get_hospital_keywords(hospital_id, default_keywords)
+
+        if hospital_keywords_info["success"] and hospital_keywords_info["is_custom"]:
+            final_keywords = hospital_keywords_info["keywords"]
+            keywords_source = f"医院个性化关键词 ({hospital_keywords_info['hospital_name']})"
+            logger.info(f"✅ [PROCUREMENT CRAWL][{request_id}] 使用医院个性化关键词: {final_keywords}")
+        else:
+            logger.info(f"ℹ️ [PROCUREMENT CRAWL][{request_id}] 医院未设置个性化关键词，继续使用其他来源")
+
+    # 如果医院没有个性化关键词，使用请求中的关键词
+    if final_keywords is None and request.keywords:
+        final_keywords = request.keywords
+        keywords_source = "请求参数关键词"
+        logger.info(f"✅ [PROCUREMENT CRAWL][{request_id}] 使用请求参数关键词: {final_keywords}")
+
+    # 如果都没有，使用默认关键词
+    if final_keywords is None:
+        final_keywords = default_keywords
+        keywords_source = "系统默认关键词"
+        logger.info(f"✅ [PROCUREMENT CRAWL][{request_id}] 使用系统默认关键词: {final_keywords}")
+
+    # 记录处理后的参数
+    logger.info(f"✅ [PROCUREMENT CRAWL][{request_id}] 参数验证通过")
+    logger.info(f"🔄 [PROCUREMENT CRAWL][{request_id}] 开始爬取...")
+    logger.info(f"📊 [PROCUREMENT CRAWL][{request_id}] 关键词来源: {keywords_source}")
+    logger.debug(f"🔧 [PROCUREMENT CRAWL][{request_id}] 处理后参数:")
+    logger.debug(f"   - 处理后base_url: '{base_url}'")
+    logger.debug(f"   - 最终max_depth: {max_depth}")
+    logger.debug(f"   - 最终max_pages: {max_pages}")
+    logger.debug(f"   - 最终keywords: {final_keywords}")
+    logger.debug(f"   - 最终hospital_id: {hospital_id}")
+    logger.debug(f"   - 关键词来源: {keywords_source}")
 
     try:
         result = await crawl_procurement_links(
             base_url,
             max_depth=max_depth,
             max_pages=max_pages,
-            keywords=keyword_list,
+            keywords=final_keywords,
         )
-    except HTTPException:
+    except HTTPException as e:
         # 透传已有 HTTP 异常
+        logger.error(f"❌ [PROCUREMENT CRAWL][{request_id}] HTTP异常: {e.detail}")
         raise
     except NotImplementedError as e:
         # Windows Playwright async subprocess issue
-        logger.error(f"Windows Playwright subprocess 错误: {e}")
+        logger.error(f"❌ [PROCUREMENT CRAWL][{request_id}] Windows Playwright subprocess 错误: {e}")
         raise HTTPException(
             status_code=500,
             detail="Windows 系统下爬虫启动失败，请联系管理员检查配置"
         )
     except Exception as e:
+        # 记录详细的错误信息
+        logger.error("=" * 80)
+        logger.error(f"❌ [PROCUREMENT CRAWL][{request_id}] 爬取失败")
+        logger.error(f"🔗 基础URL: {base_url}")
+        logger.error(f"📏 最大深度: {max_depth}")
+        logger.error(f"📄 最大页面数: {max_pages}")
+        logger.error(f"🏷️ 关键词列表: {keyword_list}")
+        logger.error(f"❌ 错误类型: {type(e).__name__}")
+        logger.error(f"❌ 错误详情: {str(e)}")
+        logger.error(f"⏰ 失败时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.error("=" * 80)
+
+        # 同时记录到原有的错误日志中
         logger.error(f"采购链接爬取失败: {e}")
         logger.error(f"错误类型: {type(e).__name__}")
         logger.error(f"错误详情: {str(e)}")
+
         raise HTTPException(status_code=500, detail=f"爬取失败: {str(e)}")
+
+    # 记录成功结果日志
+    logger.info("=" * 80)
+    logger.info(f"✅ [PROCUREMENT CRAWL][{request_id}] 爬取完成")
+    logger.info(f"🏠 目标网站: {result.get('base_url', base_url)}")
+    logger.info(f"🔗 发现URL总数: {result.get('total_urls', 0)}")
+    logger.info(f"➕ 新增/更新记录: {result.get('new_or_updated', 0)}")
+    logger.info(f"📁 数据库路径: {result.get('db_path', '')}")
+    logger.info(f"⏰ 完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    # 记录详细的爬取结果参数
+    logger.debug(f"📊 [PROCUREMENT CRAWL][{request_id}] 详细爬取结果:")
+    for key, value in result.items():
+        logger.debug(f"   - {key}: {value}")
+
+    logger.info("=" * 80)
 
     return ProcurementCrawlResponse(
         base_url=result.get("base_url", base_url),

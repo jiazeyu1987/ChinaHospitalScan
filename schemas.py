@@ -337,6 +337,11 @@ class ProcurementCrawlRequest(BaseModel):
         description="链接文本关键词列表。如果提供，只有link_text包含至少一个关键词的链接才会被存储。默认使用内置关键词：公告、采购、公开、招标、询价。支持中文关键词，如【公告】、【采购】、【中标】等。",
         example=["公告", "采购", "中标"]
     )
+    hospital_id: Optional[int] = Field(
+        default=None,
+        description="医院ID，如果提供，系统将优先使用该医院的个性化关键词设置。如果医院设置了个性化关键词，将使用医院的关键词；如果未设置，则使用keywords参数或默认关键词。",
+        example=123
+    )
 
     @field_validator('keywords')
     @classmethod
@@ -424,3 +429,62 @@ class ProcurementLatestResponse(BaseModel):
     search_params: ProcurementLatestRequest = Field(..., description="搜索参数")
     request_id: str = Field(..., description="请求ID")
     timestamp: datetime = Field(default_factory=datetime.now, description="响应时间")
+
+
+class HospitalKeywordsRequest(BaseModel):
+    """医院关键词设置请求模型"""
+    hospital_id: int = Field(..., description="医院ID")
+    keywords: List[str] = Field(
+        default=[],
+        description="医院个性化采购关键词列表，空列表表示重置为默认关键词",
+        example=["公告", "采购", "医疗设备招标", "药品采购"]
+    )
+
+    @field_validator('keywords')
+    @classmethod
+    def validate_keywords(cls, v):
+        if v is None:
+            return []
+
+        # 验证关键词数量不超过50个
+        if len(v) > 50:
+            raise ValueError('关键词数量不能超过50个')
+
+        # 验证每个关键词
+        for i, keyword in enumerate(v):
+            if not keyword or not keyword.strip():
+                raise ValueError(f'关键词不能为空字符串（第{i+1}个关键词）')
+
+            # 验证关键词长度
+            if len(keyword.strip()) > 100:
+                raise ValueError(f'关键词长度不能超过100个字符（第{i+1}个关键词）')
+
+        # 去重并返回清理后的关键词
+        cleaned_keywords = []
+        seen = set()
+        for keyword in v:
+            cleaned_keyword = keyword.strip()
+            if cleaned_keyword and cleaned_keyword not in seen:
+                cleaned_keywords.append(cleaned_keyword)
+                seen.add(cleaned_keyword)
+
+        return cleaned_keywords
+
+
+class HospitalKeywordsResponse(BaseModel):
+    """医院关键词设置响应模型"""
+    success: bool = Field(..., description="操作是否成功")
+    message: str = Field(..., description="操作结果描述")
+    hospital_id: int = Field(..., description="医院ID")
+    hospital_name: str = Field(..., description="医院名称")
+    keywords: List[str] = Field(..., description="当前关键词列表")
+    is_custom: bool = Field(..., description="是否为个性化设置（True表示使用医院自定义关键词，False表示使用系统默认关键词）")
+    default_keywords: List[str] = Field(..., description="系统默认关键词列表")
+    request_id: str = Field(..., description="请求ID")
+    timestamp: datetime = Field(default_factory=datetime.now, description="响应时间")
+
+
+class HospitalKeywordsDeleteRequest(BaseModel):
+    """医院关键词重置请求模型"""
+    hospital_id: int = Field(..., description="医院ID")
+    confirm: bool = Field(..., description="设置为True确认重置医院关键词为默认值")
