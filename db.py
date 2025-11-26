@@ -183,6 +183,7 @@ class Database:
                         staff_count INTEGER,
                         departments TEXT,
                         specializations TEXT,
+                        base_procurement_link TEXT,
                         created_at TEXT NOT NULL,
                         updated_at TEXT NOT NULL,
                         FOREIGN KEY (district_id) REFERENCES districts (id)
@@ -200,7 +201,15 @@ class Database:
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_districts_name ON districts(name)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_hospitals_district_id ON hospitals(district_id)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_hospitals_name ON hospitals(name)")
-                
+
+                # 为现有数据库添加base_procurement_link字段（如果不存在）
+                try:
+                    cursor.execute("ALTER TABLE hospitals ADD COLUMN base_procurement_link TEXT")
+                    logger.info("Added base_procurement_link column to hospitals table")
+                except Exception as e:
+                    # 字段可能已存在，忽略错误
+                    logger.debug(f"base_procurement_link column may already exist: {e}")
+
                 conn.commit()
                 logger.info("数据库初始化完成")
                 
@@ -884,6 +893,93 @@ class Database:
         except Exception as e:
             logger.error(f"根据名称和区县查询医院失败: {e}")
             return None
+
+    async def get_hospital_by_name(self, hospital_name: str) -> dict:
+        """
+        根据医院名称查询医院信息
+
+        Args:
+            hospital_name: 医院名称
+
+        Returns:
+            dict: 医院信息，未找到返回None
+        """
+        try:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+
+                cursor.execute("""
+                    SELECT * FROM hospitals
+                    WHERE name = ?
+                    LIMIT 1
+                """, (hospital_name,))
+
+                row = cursor.fetchone()
+                if row:
+                    return dict(row)
+                else:
+                    return None
+
+        except Exception as e:
+            logger.error(f"根据名称查询医院失败: {e}")
+            return None
+
+    async def update_hospital_base_procurement_link(self, hospital_id: int, base_procurement_link: str) -> dict:
+        """
+        更新医院基础采购链接
+
+        Args:
+            hospital_id: 医院ID
+            base_procurement_link: 基础采购链接
+
+        Returns:
+            dict: 更新结果
+        """
+        try:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+                cursor = conn.cursor()
+
+                # 更新基础采购链接和更新时间
+                cursor.execute("""
+                    UPDATE hospitals
+                    SET base_procurement_link = ?, updated_at = ?
+                    WHERE id = ?
+                """, (base_procurement_link, datetime.now().isoformat(), hospital_id))
+
+                affected_rows = cursor.rowcount
+                conn.commit()
+
+                if affected_rows > 0:
+                    logger.info(f"医院基础采购链接更新成功: ID={hospital_id}, link={base_procurement_link}")
+                    return {
+                        "success": True,
+                        "message": "基础采购链接更新成功",
+                        "hospital_id": hospital_id,
+                        "base_procurement_link": base_procurement_link,
+                        "affected_rows": affected_rows
+                    }
+                else:
+                    error_msg = f"未找到医院ID: {hospital_id}"
+                    logger.warning(error_msg)
+                    return {
+                        "success": False,
+                        "message": error_msg,
+                        "hospital_id": hospital_id,
+                        "base_procurement_link": base_procurement_link,
+                        "affected_rows": 0
+                    }
+
+        except Exception as e:
+            error_msg = f"更新医院基础采购链接失败: {e}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "message": error_msg,
+                "hospital_id": hospital_id,
+                "base_procurement_link": base_procurement_link,
+                "affected_rows": 0
+            }
 
     async def update_hospital(self, hospital_id: int, name: str = None, level: str = None,
                             address: str = None, phone: str = None, beds_count: int = None,

@@ -340,3 +340,21 @@ class ProcurementCrawlResponse(BaseModel):
     total_urls: int = Field(..., description="本次采集到的唯一URL数量")
     new_or_updated: int = Field(..., description="新增或更新的记录数量")
     db_path: str = Field(..., description="写入数据的数据库文件路径")
+
+
+class BaseProcurementLinkRequest(BaseModel):
+    """基础采购链接设置请求模型"""
+    hospital_name: str = Field(..., description="医院名称", min_length=2, max_length=200)
+    base_procurement_link: str = Field(..., description="基础采购链接URL", min_length=1, max_length=500)
+
+
+class BaseProcurementLinkResponse(BaseModel):
+    """基础采购链接设置响应模型"""
+    success: bool = Field(..., description="操作是否成功")
+    message: str = Field(..., description="操作结果描述")
+    hospital_id: Optional[int] = Field(None, description="医院ID")
+    hospital_name: str = Field(..., description="医院名称")
+    base_procurement_link: Optional[str] = Field(None, description="设置的基础采购链接")
+    updated: bool = Field(..., description="是否执行了更新操作")
+    request_id: str = Field(..., description="请求ID")
+    timestamp: datetime = Field(default_factory=datetime.now, description="响应时间")

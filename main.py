@@ -54,6 +54,8 @@ from schemas import (
     BatchUpdateProgress,
     ProcurementCrawlRequest,
     ProcurementCrawlResponse,
+    BaseProcurementLinkRequest,
+    BaseProcurementLinkResponse,
 )
 
 # Define StandardResponse for consistency
@@ -1285,6 +1287,131 @@ async def get_and_update_hospital_website(request: HospitalWebsiteRequest):
         logger.error(f"[{request_id}] 完整堆栈: {traceback.format_exc()}")
 
         raise HTTPException(status_code=500, detail=error_msg)
+
+@app.post("/hospital/base-procurement-link",
+          response_model=BaseProcurementLinkResponse,
+          summary="设置医院基础采购链接",
+          description="""
+根据医院名称设置医院的基础采购链接信息。
+
+**功能特性**：
+- 🔗 手动设置医院基础采购链接
+- 🗄️ 更新数据库中的基础采购链接字段
+- 📊 提供详细的设置结果日志
+- 🔒 数据验证和错误处理
+
+**参数说明**：
+- hospital_name: 医院名称（2-200个字符）
+- base_procurement_link: 基础采购链接URL（1-500个字符）
+
+**返回数据**：
+- success: 操作是否成功
+- message: 操作结果描述
+- hospital_id: 医院ID（如果找到）
+- hospital_name: 医院名称
+- base_procurement_link: 设置的基础采购链接
+- updated: 是否执行了更新操作
+- request_id: 唯一请求ID，用于日志追踪
+- timestamp: 响应时间戳
+
+**使用示例**：
+```json
+{
+  "hospital_name": "北京协和医院",
+  "base_procurement_link": "https://www.pumch.cn/procurement"
+}
+```
+""",
+    tags=["医院管理"])
+async def set_hospital_base_procurement_link(request: BaseProcurementLinkRequest) -> BaseProcurementLinkResponse:
+    """
+    设置医院基础采购链接接口：根据医院名称手动设置基础采购链接。
+    """
+    import uuid
+    request_id = str(uuid.uuid4())
+    start_time = time.time()
+
+    logger.info(f"[{request_id}] ========== 开始设置医院基础采购链接 ==========")
+    logger.info(f"[{request_id}] 请求参数: hospital_name='{request.hospital_name}', base_procurement_link='{request.base_procurement_link}'")
+
+    try:
+        # 参数验证
+        if not request.hospital_name or not request.hospital_name.strip():
+            raise HTTPException(status_code=400, detail="医院名称不能为空")
+
+        if not request.base_procurement_link or not request.base_procurement_link.strip():
+            raise HTTPException(status_code=400, detail="基础采购链接不能为空")
+
+        hospital_name_clean = request.hospital_name.strip()
+        base_procurement_link_clean = request.base_procurement_link.strip()
+
+        logger.info(f"[{request_id}] 参数验证通过: hospital_name='{hospital_name_clean}'")
+
+        # 获取数据库连接
+        db = await get_db()
+
+        # 查找医院
+        hospital_info = await db.get_hospital_by_name(hospital_name_clean)
+
+        if not hospital_info:
+            error_msg = f"未找到医院: {hospital_name_clean}"
+            logger.error(f"[{request_id}] {error_msg}")
+            raise HTTPException(status_code=404, detail=error_msg)
+
+        logger.info(f"[{request_id}] 找到医院: ID={hospital_info['id']}, 名称={hospital_info['name']}")
+
+        # 更新基础采购链接
+        logger.info(f"[{request_id}] 开始更新医院基础采购链接")
+        update_start_time = time.time()
+
+        try:
+            update_result = await db.update_hospital_base_procurement_link(
+                hospital_info["id"],
+                base_procurement_link_clean
+            )
+            update_time = time.time() - update_start_time
+
+            if update_result.get("success"):
+                logger.info(f"[{request_id}] 数据库更新成功: {update_result.get('message')}，耗时: {update_time:.3f}s")
+
+                total_time = time.time() - start_time
+                success_message = f"医院基础采购链接设置成功"
+
+                logger.info(f"[{request_id}] ========== 基础采购链接设置成功 ==========")
+                logger.info(f"[{request_id}] 总耗时: {total_time:.3f}s")
+
+                return BaseProcurementLinkResponse(
+                    success=True,
+                    message=success_message,
+                    hospital_id=hospital_info["id"],
+                    hospital_name=hospital_info["name"],
+                    base_procurement_link=base_procurement_link_clean,
+                    updated=True,
+                    request_id=request_id,
+                    timestamp=datetime.now()
+                )
+            else:
+                error_msg = f"数据库更新失败: {update_result.get('message', '未知错误')}"
+                logger.error(f"[{request_id}] {error_msg}")
+                raise HTTPException(status_code=500, detail=error_msg)
+
+        except Exception as db_error:
+            update_time = time.time() - update_start_time
+            error_msg = f"数据库操作异常: {str(db_error)}"
+            logger.error(f"[{request_id}] {error_msg}，耗时: {update_time:.3f}s")
+            raise HTTPException(status_code=500, detail=error_msg)
+
+    except HTTPException:
+        # 重新抛出HTTP异常
+        total_time = time.time() - start_time
+        logger.error(f"[{request_id}] HTTP异常: 总耗时={total_time:.3f}s")
+        raise
+    except Exception as e:
+        total_time = time.time() - start_time
+        error_msg = f"设置基础采购链接时发生未知错误: {str(e)}"
+        logger.error(f"[{request_id}] {error_msg}，总耗时: {total_time:.3f}s")
+        raise HTTPException(status_code=500, detail=error_msg)
+
 
 @app.post("/hospitals/websites/batch-update",
           response_model=BatchUpdateResponse,
