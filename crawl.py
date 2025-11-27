@@ -455,6 +455,14 @@ async def fallback_crawl_procurement_links(
                     href = new_href
                     # 不再continue，继续后续处理
 
+                    # 🎯 [KEYWORD_DEBUG] 转换后立即检查链接文本是否包含关键词
+                    if text and any(keyword in text for keyword in ["采购", "招标", "公告", "设备", "医疗", "器械"]):
+                        logging.info(f"✅ [KEYWORD_DEBUG] 相对链接转换后包含关键词: {href}")
+                        logging.info(f"   链接文本: '{text}'")
+                    elif text:
+                        logging.debug(f"❌ [KEYWORD_DEBUG] 相对链接转换后无关键词: {href}")
+                        logging.debug(f"   链接文本: '{text}'")
+
                 # 只保留同域链接参与后续遍历
                 if domain not in href:
                     if processed_links_on_page <= 5:  # 只记录前5个外域链接
@@ -505,14 +513,30 @@ async def fallback_crawl_procurement_links(
             if link_text:
                 logging.info(f"   链接文本: '{link_text[:100]}...'")
         else:
+            # 🎯 [KEYWORD_FILTER_DEBUG] 开始关键词过滤
+            logging.debug(f"🔍 [KEYWORD_FILTER_DEBUG] 检查链接: {raw_url}")
+            if link_text:
+                logging.debug(f"   链接文本: '{link_text}'")
+            else:
+                logging.debug(f"   ⚠️ 链接文本为空")
+
             # Apply dynamic keyword filter if provided; otherwise fall back to built-in keywords
             if keywords:
                 text_for_match = link_text or ""
-                if not any(kw and kw in text_for_match for kw in keywords):
+                matched_keywords = [kw for kw in keywords if kw and kw in text_for_match]
+                if matched_keywords:
+                    logging.info(f"✅ [KEYWORD_FILTER_DEBUG] 匹配关键词: {matched_keywords}")
+                    logging.info(f"   链接: {raw_url}")
+                    logging.info(f"   文本: '{link_text}'")
+                else:
+                    logging.debug(f"❌ [KEYWORD_FILTER_DEBUG] 无关键词匹配，跳过: {raw_url}")
                     continue
             else:
                 if not _has_keyword(link_text, tuple(keywords) if keywords else None, unlimited_mode):
+                    logging.debug(f"❌ [KEYWORD_FILTER_DEBUG] _has_keyword返回False，跳过: {raw_url}")
                     continue
+                else:
+                    logging.info(f"✅ [KEYWORD_FILTER_DEBUG] _has_keyword返回True，通过: {raw_url}")
         try:
             # 先检查记录是否已存在
             cursor.execute(
