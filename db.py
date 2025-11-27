@@ -219,6 +219,14 @@ class Database:
                     # 字段可能已存在，忽略错误
                     logger.debug(f"procurement_keywords column may already exist: {e}")
 
+                # 为现有数据库添加deleted_at字段（如果不存在）
+                try:
+                    cursor.execute("ALTER TABLE hospitals ADD COLUMN deleted_at TEXT")
+                    logger.info("Added deleted_at column to hospitals table")
+                except Exception as e:
+                    # 字段可能已存在，忽略错误
+                    logger.debug(f"deleted_at column may already exist: {e}")
+
                 conn.commit()
                 logger.info("数据库初始化完成")
                 
@@ -812,38 +820,39 @@ class Database:
                 
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                
+
                 if district_id:
-                    # 获取指定区县的医院
-                    cursor.execute("SELECT COUNT(*) FROM hospitals WHERE district_id = ?", (district_id,))
+                    # 获取指定区县的医院（排除已删除的）
+                    cursor.execute("SELECT COUNT(*) FROM hospitals WHERE district_id = ? AND deleted_at IS NULL", (district_id,))
                     total = cursor.fetchone()[0]
-                    
+
                     # 计算有效页面数
                     total_pages = (total + page_size - 1) // page_size if total > 0 else 1
                     if page > total_pages and total > 0:
                         page = total_pages
-                    
+
                     offset = (page - 1) * page_size
                     cursor.execute("""
-                        SELECT * FROM hospitals 
-                        WHERE district_id = ? 
-                        ORDER BY name 
+                        SELECT * FROM hospitals
+                        WHERE district_id = ? AND deleted_at IS NULL
+                        ORDER BY name
                         LIMIT ? OFFSET ?
                     """, (district_id, page_size, offset))
                 else:
-                    # 获取所有医院
-                    cursor.execute("SELECT COUNT(*) FROM hospitals")
+                    # 获取所有医院（排除已删除的）
+                    cursor.execute("SELECT COUNT(*) FROM hospitals WHERE deleted_at IS NULL")
                     total = cursor.fetchone()[0]
-                    
+
                     # 计算有效页面数
                     total_pages = (total + page_size - 1) // page_size if total > 0 else 1
                     if page > total_pages and total > 0:
                         page = total_pages
-                    
+
                     offset = (page - 1) * page_size
                     cursor.execute("""
-                        SELECT * FROM hospitals 
-                        ORDER BY name 
+                        SELECT * FROM hospitals
+                        WHERE deleted_at IS NULL
+                        ORDER BY name
                         LIMIT ? OFFSET ?
                     """, (page_size, offset))
                 
@@ -865,7 +874,7 @@ class Database:
 
                 cursor.execute("""
                     SELECT * FROM hospitals
-                    WHERE name LIKE ?
+                    WHERE name LIKE ? AND deleted_at IS NULL
                     ORDER BY name
                     LIMIT ?
                 """, (f"%{query}%", limit))
@@ -1855,6 +1864,82 @@ class Database:
             import traceback
             logger.error(f"[{request_id}] 异常堆栈: {traceback.format_exc()}")
             return None
+
+    async def soft_delete_hospital(self, hospital_id: int) -> dict:
+        """
+        软删除医院（标记为已删除）
+
+        Args:
+            hospital_id: 医院ID
+
+        Returns:
+            dict: 删除结果
+        """
+        request_id = f"DB-{uuid.uuid4().hex[:8]}"
+        logger.info(f"[{request_id}] 数据库操作开始: soft_delete_hospital")
+        logger.info(f"[{request_id}] 参数: hospital_id={hospital_id}")
+
+        try:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+                cursor = conn.cursor()
+
+                # 检查医院是否存在且未被删除
+                cursor.execute("""
+                    SELECT id, name FROM hospitals
+                    WHERE id = ? AND deleted_at IS NULL
+                    LIMIT 1
+                """, (hospital_id,))
+
+                result = cursor.fetchone()
+
+                if not result:
+                    logger.warning(f"[{request_id}] 医院不存在或已被删除: ID={hospital_id}")
+                    return {
+                        "success": False,
+                        "message": f"医院不存在或已被删除: ID={hospital_id}",
+                        "hospital_id": hospital_id
+                    }
+
+                hospital_name = result[1]
+
+                # 执行软删除（更新deleted_at字段）
+                cursor.execute("""
+                    UPDATE hospitals
+                    SET deleted_at = ?, updated_at = ?
+                    WHERE id = ?
+                """, (datetime.now().isoformat(), datetime.now().isoformat(), hospital_id))
+
+                affected_rows = cursor.rowcount
+                conn.commit()
+
+                if affected_rows > 0:
+                    logger.info(f"[{request_id}] 医院软删除成功: '{hospital_name}' (ID: {hospital_id})")
+                    return {
+                        "success": True,
+                        "message": f"医院 '{hospital_name}' 删除成功",
+                        "hospital_id": hospital_id,
+                        "hospital_name": hospital_name,
+                        "affected_rows": affected_rows
+                    }
+                else:
+                    logger.warning(f"[{request_id}] 医院删除失败: 未找到匹配的记录 ID={hospital_id}")
+                    return {
+                        "success": False,
+                        "message": f"删除失败: 未找到医院 ID={hospital_id}",
+                        "hospital_id": hospital_id
+                    }
+
+        except Exception as e:
+            error_msg = f"软删除医院失败: {str(e)}"
+            logger.error(f"[{request_id}] 数据库异常: {error_msg}")
+            logger.error(f"[{request_id}] 异常详情: {type(e).__name__}: {str(e)}")
+            import traceback
+            logger.error(f"[{request_id}] 异常堆栈: {traceback.format_exc()}")
+            return {
+                "success": False,
+                "message": error_msg,
+                "hospital_id": hospital_id
+            }
 
 # 全局数据库实例
 _db_instance = None

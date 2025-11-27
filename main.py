@@ -1732,6 +1732,123 @@ async def reset_hospital_keywords(hospital_id: int) -> HospitalKeywordsResponse:
         raise HTTPException(status_code=500, detail=error_msg)
 
 
+@app.delete("/hospital/{hospital_id}",
+            response_model=dict,
+            summary="删除医院",
+            description="""
+删除指定医院（软删除，保留历史数据）。
+
+**功能特性**：
+- 🏥 软删除机制：保留历史数据，仅标记为已删除
+- 🔄 数据完整性：维护所有相关扫描记录和采购信息
+- 📝 操作日志：完整的删除操作审计记录
+- ⚡ 即时生效：删除后立即从医院列表中消失
+
+**参数说明**：
+- hospital_id: 医院ID（路径参数）
+
+**删除效果**：
+- 医院状态变更为已删除（deleted_at字段设置时间戳）
+- 医院将从所有医院列表和搜索结果中排除
+- 所有历史扫描记录和采购数据保持不变
+- 操作记录在系统日志中，便于审计追踪
+
+**返回数据**：
+- success: 操作是否成功
+- message: 操作结果描述
+- hospital_id: 医院ID
+- hospital_name: 医院名称
+- request_id: 唯一请求ID，用于日志追踪
+- timestamp: 响应时间戳
+
+**使用示例**：
+```
+DELETE /hospital/123
+```
+
+**响应示例**：
+```json
+{
+  "success": true,
+  "message": "医院 \"北京协和医院\" 删除成功",
+  "hospital_id": 123,
+  "hospital_name": "北京协和医院",
+  "request_id": "abc123",
+  "timestamp": "2025-11-27T00:50:00Z"
+}
+```
+""",
+    tags=["医院管理"])
+async def delete_hospital(hospital_id: int) -> dict:
+    """
+    删除医院接口：软删除指定医院，保留历史数据。
+    """
+    import uuid
+    import time
+
+    request_id = str(uuid.uuid4())
+    start_time = time.time()
+
+    logger.info(f"[{request_id}] ========== 医院删除请求开始 ==========")
+    logger.info(f"[{request_id}] 请求医院ID: {hospital_id}")
+
+    try:
+        # 获取数据库连接
+        db = await get_db()
+
+        # 验证医院存在
+        hospital_info = await db.get_hospital_by_id(hospital_id)
+        if not hospital_info:
+            logger.warning(f"[{request_id}] 医院不存在: ID={hospital_id}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"医院不存在: ID={hospital_id}"
+            )
+
+        hospital_name = hospital_info["name"]
+        logger.info(f"[{request_id}] 找到医院: {hospital_name}")
+
+        # 执行软删除
+        delete_start_time = time.time()
+        delete_result = await db.soft_delete_hospital(hospital_id)
+        delete_time = time.time() - delete_start_time
+
+        if delete_result["success"]:
+            logger.info(f"[{request_id}] 医院删除成功，耗时: {delete_time:.3f}s")
+
+            total_time = time.time() - start_time
+            logger.info(f"[{request_id}] 删除完成，总耗时: {total_time:.3f}s")
+
+            return {
+                "success": True,
+                "message": delete_result["message"],
+                "hospital_id": hospital_id,
+                "hospital_name": hospital_name,
+                "request_id": request_id,
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            # 删除失败
+            error_msg = delete_result["message"]
+            logger.error(f"[{request_id}] 医院删除失败: {error_msg}")
+            raise HTTPException(status_code=400, detail=error_msg)
+
+    except HTTPException:
+        # 重新抛出HTTP异常
+        total_time = time.time() - start_time
+        logger.error(f"[{request_id}] HTTP异常: 总耗时={total_time:.3f}s")
+        raise
+    except Exception as e:
+        # 处理其他异常
+        total_time = time.time() - start_time
+        error_msg = f"删除医院时发生未知错误: {str(e)}"
+        logger.error(f"[{request_id}] {error_msg}，总耗时={total_time:.3f}s")
+        logger.error(f"[{request_id}] 异常详情: {type(e).__name__}: {str(e)}")
+        import traceback
+        logger.error(f"[{request_id}] 异常堆栈: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
 @app.post("/hospitals/websites/batch-update",
           response_model=BatchUpdateResponse,
           summary="批量更新所有医院网站信息",
