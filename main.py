@@ -287,6 +287,24 @@ async def health_check():
     """健康检查"""
     return {"status": "healthy"}
 
+@app.get("/test/code-version")
+async def test_code_version():
+    """测试代码版本 - 验证代码更新是否生效"""
+    from datetime import datetime
+    import os
+
+    # 检查crawl.py文件的修改时间
+    crawl_path = os.path.join(os.path.dirname(__file__), 'crawl.py')
+    mtime = os.path.getmtime(crawl_path)
+    mod_time = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
+
+    return {
+        "status": "updated",
+        "crawl_py_modified": mod_time,
+        "test_timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        "message": "如果看到这个响应，说明代码更新已生效"
+    }
+
 @app.delete("/database/clear")
 async def clear_database():
     """清空所有数据库表的数据，保留表结构"""

@@ -7,7 +7,7 @@ import sqlite3
 import sys
 import time
 from typing import Dict, Set, Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 
 # 配置爬虫专用日志器
 crawler_logger = logging.getLogger('crawler')
@@ -160,7 +160,6 @@ def _is_html_page(url: str, unlimited_mode: bool = False) -> bool:
 
     在无限制模式下，放行所有同域URL。
     """
-    return True
     try:
         logging.info(f"🔍 [INFO] _is_html_page called with url={url}, unlimited_mode={unlimited_mode}")
 
@@ -450,9 +449,11 @@ async def fallback_crawl_procurement_links(
                         logging.info(f"⏭️ [FALLBACK_CRAWLER] 跳过锚点链接: {href}")
                     continue  # Skip anchors
                 elif not href.startswith("http"):
-                    if processed_links_on_page <= 5:  # 只记录前5个其他相对链接
-                        logging.info(f"⏭️ [FALLBACK_CRAWLER] 跳过其他相对链接: {href}")
-                    continue  # Skip other relative links
+                    # 🔧 [FIX] 使用urljoin转换相对链接为绝对链接
+                    new_href = urljoin(current_url, href)
+                    logging.info(f"🔧 [CONVERT] BeautifulSoup相对链接转换: {href} -> {new_href}")
+                    href = new_href
+                    # 不再continue，继续后续处理
 
                 # 只保留同域链接参与后续遍历
                 if domain not in href:
@@ -460,45 +461,12 @@ async def fallback_crawl_procurement_links(
                         logging.info(f"🚫 [FALLBACK_CRAWLER] 跳过外域链接: {href}")
                     continue
 
-                # 强制记录所有同域链接（临时调试解决方案）
-                if len(all_raw_urls) == 0:  # 只在第一个链接时记录一次
-                    logging.info(f"🔥 [FORCE_DEBUG] 强制模式：开始记录所有同域链接")
-                    logging.info(f"🔥 [FORCE_DEBUG] 当前已处理链接数: {processed_links_on_page}")
-
-                # 直接添加所有同域链接，跳过所有过滤
-                if href not in all_raw_urls:
-                    all_raw_urls.add(href)
-                    if len(all_raw_urls) <= 10:  # 只记录前10个添加的链接
-                        logging.info(f"🔥 [FORCE_ADD] 添加链接 #{len(all_raw_urls)}: {href}")
-                        logging.info(f"   文本: '{text[:100]}...'")
-                        logging.info(f"   处理序号: {processed_links_on_page}")
-
-                if text:
-                    url_to_text[href] = text
-
-                # 原有的URL检查逻辑（仅用于统计）
+                # HTML页面检查
                 html_check_result = _is_html_page(href, unlimited_mode)
                 if html_check_result:
-                    if len(all_raw_urls) <= 5:  # 只记录前5个HTML页面
-                        logging.info(f"✅ [HTML_CHECK] HTML页面检查通过: {href}")
-                else:
-                    if len(all_raw_urls) <= 5:  # 只记录前5个非HTML页面
-                        logging.info(f"❌ [HTML_CHECK] HTML页面检查失败: {href}")
-
-                # 调试模式：记录所有重要链接（即使不是HTML页面）
-                if len(text) > 5:  # 只记录有意义的链接文本
-                    if not unlimited_mode:
-                        keywords = ["公告", "采购", "招标", "设备", "医疗", "器械", "中标", "结果", "通知", "信息"]
-                        matched_keywords = [kw for kw in keywords if kw.lower() in text.lower()]
-                        if matched_keywords:
-                            logging.info(f"🔍 [DEBUG] 发现可能相关的链接: {href}")
-                            logging.info(f"   文本: '{text}'")
-                            logging.info(f"   匹配关键词: {matched_keywords}")
-                            logging.info(f"   HTML页面: {_is_html_page(href, unlimited_mode)}")
-                        elif len(text) > 20:  # 记录长文本链接进行分析
-                            logging.debug(f"📝 [DEBUG] 发现长文本链接: {href}")
-                            logging.debug(f"   文本: '{text[:50]}...'")
-                            logging.debug(f"   HTML页面: {_is_html_page(href, unlimited_mode)}")
+                    all_raw_urls.add(href)
+                    if text:
+                        url_to_text[href] = text
                     else:
                         # 无限制模式：记录所有有意义的链接
                         logging.info(f"🔥 [UNLIMITED_MODE] 处理链接: {href}")
