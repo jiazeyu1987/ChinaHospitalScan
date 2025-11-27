@@ -1941,6 +1941,158 @@ class Database:
                 "hospital_id": hospital_id
             }
 
+    async def clear_hospital_website(self, hospital_id: int) -> dict:
+        """
+        清除医院网站（设置为"无"）
+
+        Args:
+            hospital_id: 医院ID
+
+        Returns:
+            dict: 更新结果
+        """
+        request_id = f"DB-{uuid.uuid4().hex[:8]}"
+        logger.info(f"[{request_id}] 数据库操作开始: clear_hospital_website")
+        logger.info(f"[{request_id}] 参数: hospital_id={hospital_id}")
+
+        try:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+                cursor = conn.cursor()
+
+                # 检查医院是否存在
+                cursor.execute("""
+                    SELECT id, name FROM hospitals
+                    WHERE id = ? AND deleted_at IS NULL
+                    LIMIT 1
+                """, (hospital_id,))
+
+                result = cursor.fetchone()
+
+                if not result:
+                    logger.warning(f"[{request_id}] 医院不存在或已被删除: ID={hospital_id}")
+                    return {
+                        "success": False,
+                        "message": f"医院不存在或已被删除: ID={hospital_id}",
+                        "hospital_id": hospital_id
+                    }
+
+                hospital_name = result[1]
+
+                # 清除网站信息（设置为"无"）
+                cursor.execute("""
+                    UPDATE hospitals
+                    SET website = '无', updated_at = ?
+                    WHERE id = ?
+                """, (datetime.now().isoformat(), hospital_id))
+
+                affected_rows = cursor.rowcount
+                conn.commit()
+
+                if affected_rows > 0:
+                    logger.info(f"[{request_id}] 医院网站清除成功: '{hospital_name}' (ID: {hospital_id})")
+                    return {
+                        "success": True,
+                        "message": f"医院 '{hospital_name}' 网站已设置为无",
+                        "hospital_id": hospital_id,
+                        "hospital_name": hospital_name,
+                        "affected_rows": affected_rows
+                    }
+                else:
+                    logger.warning(f"[{request_id}] 医院网站清除失败: 未找到匹配的记录 ID={hospital_id}")
+                    return {
+                        "success": False,
+                        "message": f"清除失败: 未找到医院 ID={hospital_id}",
+                        "hospital_id": hospital_id
+                    }
+
+        except Exception as e:
+            error_msg = f"清除医院网站失败: {str(e)}"
+            logger.error(f"[{request_id}] 数据库异常: {error_msg}")
+            logger.error(f"[{request_id}] 异常详情: {type(e).__name__}: {str(e)}")
+            import traceback
+            logger.error(f"[{request_id}] 异常堆栈: {traceback.format_exc()}")
+            return {
+                "success": False,
+                "message": error_msg,
+                "hospital_id": hospital_id
+            }
+
+    async def clear_hospital_procurement_link(self, hospital_id: int) -> dict:
+        """
+        清除医院基础采购链接（设置为"无"）
+
+        Args:
+            hospital_id: 医院ID
+
+        Returns:
+            dict: 更新结果
+        """
+        request_id = f"DB-{uuid.uuid4().hex[:8]}"
+        logger.info(f"[{request_id}] 数据库操作开始: clear_hospital_procurement_link")
+        logger.info(f"[{request_id}] 参数: hospital_id={hospital_id}")
+
+        try:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+                cursor = conn.cursor()
+
+                # 检查医院是否存在
+                cursor.execute("""
+                    SELECT id, name FROM hospitals
+                    WHERE id = ? AND deleted_at IS NULL
+                    LIMIT 1
+                """, (hospital_id,))
+
+                result = cursor.fetchone()
+
+                if not result:
+                    logger.warning(f"[{request_id}] 医院不存在或已被删除: ID={hospital_id}")
+                    return {
+                        "success": False,
+                        "message": f"医院不存在或已被删除: ID={hospital_id}",
+                        "hospital_id": hospital_id
+                    }
+
+                hospital_name = result[1]
+
+                # 清除基础采购链接信息（设置为"无"）
+                cursor.execute("""
+                    UPDATE hospitals
+                    SET base_procurement_link = '无', updated_at = ?
+                    WHERE id = ?
+                """, (datetime.now().isoformat(), hospital_id))
+
+                affected_rows = cursor.rowcount
+                conn.commit()
+
+                if affected_rows > 0:
+                    logger.info(f"[{request_id}] 医院基础采购链接清除成功: '{hospital_name}' (ID: {hospital_id})")
+                    return {
+                        "success": True,
+                        "message": f"医院 '{hospital_name}' 基础采购链接已设置为无",
+                        "hospital_id": hospital_id,
+                        "hospital_name": hospital_name,
+                        "affected_rows": affected_rows
+                    }
+                else:
+                    logger.warning(f"[{request_id}] 医院基础采购链接清除失败: 未找到匹配的记录 ID={hospital_id}")
+                    return {
+                        "success": False,
+                        "message": f"清除失败: 未找到医院 ID={hospital_id}",
+                        "hospital_id": hospital_id
+                    }
+
+        except Exception as e:
+            error_msg = f"清除医院基础采购链接失败: {str(e)}"
+            logger.error(f"[{request_id}] 数据库异常: {error_msg}")
+            logger.error(f"[{request_id}] 异常详情: {type(e).__name__}: {str(e)}")
+            import traceback
+            logger.error(f"[{request_id}] 异常堆栈: {traceback.format_exc()}")
+            return {
+                "success": False,
+                "message": error_msg,
+                "hospital_id": hospital_id
+            }
+
 # 全局数据库实例
 _db_instance = None
 

@@ -1296,6 +1296,111 @@ async def get_and_update_hospital_website(request: HospitalWebsiteRequest):
 
         raise HTTPException(status_code=500, detail=error_msg)
 
+
+@app.post("/hospital/website/clear",
+            response_model=dict,
+            summary="清除医院官方网站",
+            description="""
+将指定医院的官方网站设置为"无"。
+
+**功能特性**：
+- 🏥 直接清除医院官网信息
+- 📝 标记为"无"状态，便于识别
+- 🔍 在医院列表中显示为"确认无数据"状态
+- 📊 操作记录在系统日志中
+
+**参数说明**：
+- hospital_id: 医院ID
+
+**操作效果**：
+- 医院网站字段设置为"无"
+- 前端状态指示器显示"确认无数据"（红色）
+- 用户仍可通过编辑功能重新设置网站
+
+**返回数据**：
+- success: 操作是否成功
+- message: 操作结果描述
+- hospital_id: 医院ID
+- hospital_name: 医院名称
+- request_id: 请求追踪ID
+- timestamp: 响应时间戳
+
+**使用示例**：
+```
+POST /hospital/website/clear
+{
+  "hospital_id": 123
+}
+```
+""",
+    tags=["医院管理"])
+async def clear_hospital_website(request: dict) -> dict:
+    """
+    清除医院官网接口：将医院网站设置为"无"。
+    """
+    import uuid
+    import time
+
+    request_id = str(uuid.uuid4())
+    start_time = time.time()
+
+    hospital_id = request.get("hospital_id")
+
+    logger.info(f"[{request_id}] ========== 医院官网清除请求开始 ==========")
+    logger.info(f"[{request_id}] 请求医院ID: {hospital_id}")
+
+    if not hospital_id:
+        logger.warning(f"[{request_id}] 缺少医院ID参数")
+        raise HTTPException(
+            status_code=400,
+            detail="缺少医院ID参数"
+        )
+
+    try:
+        # 获取数据库连接
+        db = await get_db()
+
+        # 执行清除操作
+        clear_start_time = time.time()
+        clear_result = await db.clear_hospital_website(hospital_id)
+        clear_time = time.time() - clear_start_time
+
+        if clear_result["success"]:
+            logger.info(f"[{request_id}] 医院官网清除成功，耗时: {clear_time:.3f}s")
+
+            total_time = time.time() - start_time
+            logger.info(f"[{request_id}] 清除完成，总耗时: {total_time:.3f}s")
+
+            return {
+                "success": True,
+                "message": clear_result["message"],
+                "hospital_id": hospital_id,
+                "hospital_name": clear_result.get("hospital_name", ""),
+                "request_id": request_id,
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            # 清除失败
+            error_msg = clear_result["message"]
+            logger.error(f"[{request_id}] 医院官网清除失败: {error_msg}")
+            raise HTTPException(status_code=400, detail=error_msg)
+
+    except HTTPException:
+        # 重新抛出HTTP异常
+        total_time = time.time() - start_time
+        logger.error(f"[{request_id}] HTTP异常: 总耗时={total_time:.3f}s")
+        raise
+    except Exception as e:
+        # 处理其他异常
+        total_time = time.time() - start_time
+        error_msg = f"清除医院官网时发生未知错误: {str(e)}"
+        logger.error(f"[{request_id}] {error_msg}，总耗时={total_time:.3f}s")
+        logger.error(f"[{request_id}] 异常详情: {type(e).__name__}: {str(e)}")
+        import traceback
+        logger.error(f"[{request_id}] 异常堆栈: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
 @app.post("/hospital/base-procurement-link",
           response_model=BaseProcurementLinkResponse,
           summary="设置医院基础采购链接",
@@ -1418,6 +1523,110 @@ async def set_hospital_base_procurement_link(request: BaseProcurementLinkRequest
         total_time = time.time() - start_time
         error_msg = f"设置基础采购链接时发生未知错误: {str(e)}"
         logger.error(f"[{request_id}] {error_msg}，总耗时: {total_time:.3f}s")
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+@app.post("/hospital/base-procurement-link/clear",
+            response_model=dict,
+            summary="清除医院基础采购链接",
+            description="""
+将指定医院的基础采购链接设置为"无"。
+
+**功能特性**：
+- 🏥 直接清除医院基础采购链接信息
+- 📝 标记为"无"状态，便于识别
+- 🔍 在医院列表中显示为"确认无数据"状态
+- 📊 操作记录在系统日志中
+
+**参数说明**：
+- hospital_id: 医院ID
+
+**操作效果**：
+- 医院基础采购链接字段设置为"无"
+- 前端状态指示器显示"确认无数据"（红色）
+- 用户仍可通过编辑功能重新设置采购链接
+
+**返回数据**：
+- success: 操作是否成功
+- message: 操作结果描述
+- hospital_id: 医院ID
+- hospital_name: 医院名称
+- request_id: 请求追踪ID
+- timestamp: 响应时间戳
+
+**使用示例**：
+```
+POST /hospital/base-procurement-link/clear
+{
+  "hospital_id": 123
+}
+```
+""",
+    tags=["医院管理"])
+async def clear_hospital_procurement_link(request: dict) -> dict:
+    """
+    清除医院基础采购链接接口：将医院基础采购链接设置为"无"。
+    """
+    import uuid
+    import time
+
+    request_id = str(uuid.uuid4())
+    start_time = time.time()
+
+    hospital_id = request.get("hospital_id")
+
+    logger.info(f"[{request_id}] ========== 医院基础采购链接清除请求开始 ==========")
+    logger.info(f"[{request_id}] 请求医院ID: {hospital_id}")
+
+    if not hospital_id:
+        logger.warning(f"[{request_id}] 缺少医院ID参数")
+        raise HTTPException(
+            status_code=400,
+            detail="缺少医院ID参数"
+        )
+
+    try:
+        # 获取数据库连接
+        db = await get_db()
+
+        # 执行清除操作
+        clear_start_time = time.time()
+        clear_result = await db.clear_hospital_procurement_link(hospital_id)
+        clear_time = time.time() - clear_start_time
+
+        if clear_result["success"]:
+            logger.info(f"[{request_id}] 医院基础采购链接清除成功，耗时: {clear_time:.3f}s")
+
+            total_time = time.time() - start_time
+            logger.info(f"[{request_id}] 清除完成，总耗时: {total_time:.3f}s")
+
+            return {
+                "success": True,
+                "message": clear_result["message"],
+                "hospital_id": hospital_id,
+                "hospital_name": clear_result.get("hospital_name", ""),
+                "request_id": request_id,
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            # 清除失败
+            error_msg = clear_result["message"]
+            logger.error(f"[{request_id}] 医院基础采购链接清除失败: {error_msg}")
+            raise HTTPException(status_code=400, detail=error_msg)
+
+    except HTTPException:
+        # 重新抛出HTTP异常
+        total_time = time.time() - start_time
+        logger.error(f"[{request_id}] HTTP异常: 总耗时={total_time:.3f}s")
+        raise
+    except Exception as e:
+        # 处理其他异常
+        total_time = time.time() - start_time
+        error_msg = f"清除医院基础采购链接时发生未知错误: {str(e)}"
+        logger.error(f"[{request_id}] {error_msg}，总耗时={total_time:.3f}s")
+        logger.error(f"[{request_id}] 异常详情: {type(e).__name__}: {str(e)}")
+        import traceback
+        logger.error(f"[{request_id}] 异常堆栈: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=error_msg)
 
 
