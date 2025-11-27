@@ -1,0 +1,41 @@
+        # 日期格式验证 (YYYY-MM-DD)
+        import re
+        date_pattern = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+
+        if date_from and not date_pattern.match(date_from):
+            raise HTTPException(status_code=400, detail="开始日期格式错误，请使�?YYYY-MM-DD 格式")
+
+        if date_to and not date_pattern.match(date_to):
+            raise HTTPException(status_code=400, detail="结束日期格式错误，请使用 YYYY-MM-DD 格式")
+
+        # 调用数据库函数获取采购信�?        procurement_result = await get_hospital_procurement_info(
+            hospital_name=hospital_name_clean,
+            base_url=base_url,
+            limit=limit,
+            date_from=date_from,
+            date_to=date_to
+        )
+
+        processing_time = time.time() - start_time
+
+        if procurement_result["success"]:
+            filtered_count = procurement_result.get("filtered_count", procurement_result["total_count"])
+            logger.info(f"[{request_id}] 采购信息获取成功: 过滤�?{len(procurement_result['items'])} 条记录，总计 {procurement_result['total_count']} 条，处理时间 {processing_time:.2f}s")
+
+            # 转换为API响应格式
+            items = []
+            for item_data in procurement_result["items"]:
+                items.append(ProcurementInfoItem(
+                    id=item_data["id"],
+                    title=item_data["title"],
+                    url=item_data["url"],
+                    first_seen_at=item_data["first_seen_at"],
+                    last_seen_at=item_data["last_seen_at"],
+                    is_latest=item_data["is_latest"]
+                ))
+
+            return ProcurementInfoResponse(
+                success=True,
+                hospital_name=procurement_result["hospital_name"],
+                base_procurement_link=procurement_result.get("base_procurement_link"),
+                total_count=procurement_result["total_count"],
