@@ -944,20 +944,34 @@ async def get_districts(city_id: int = None, city: str = None, page: int = 1, pa
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/hospitals", response_model=PaginatedResponse)
-async def get_hospitals(district_id: int = None, district: str = None, page: int = 1, page_size: int = 20):
+async def get_hospitals(district_id: int = None, district: str = None, city: str = None, page: int = 1, page_size: int = 20):
     """获取医院列表（分页）"""
     try:
         db = await get_db()
 
-        # 如果提供了区县名称，先查找区县ID
-        if district and not district_id:
+        # 优先处理城市参数（如果提供了城市名称，获取该城市所有医院的列表）
+        if city:
             from urllib.parse import unquote
-            district_name = unquote(district)
-            district_info = await db.get_district_by_name(district_name)
-            if district_info:
-                district_id = district_info['id']
+            city_name = unquote(city)
 
-        items, total = await db.get_hospitals(district_id, page, page_size)
+            # 通过城市名称查找城市ID
+            city_info = await db.get_city_by_name(city_name)
+            if city_info:
+                items, total = await db.get_hospitals_by_city(city_info['id'], page, page_size)
+            else:
+                # 如果找不到城市，返回空结果
+                items, total = [], 0
+        else:
+            # 原有的区县逻辑
+            # 如果提供了区县名称，先查找区县ID
+            if district and not district_id:
+                from urllib.parse import unquote
+                district_name = unquote(district)
+                district_info = await db.get_district_by_name(district_name)
+                if district_info:
+                    district_id = district_info['id']
+
+            items, total = await db.get_hospitals(district_id, page, page_size)
         
         pages = (total + page_size - 1) // page_size if page_size > 0 else 1
         

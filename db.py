@@ -866,6 +866,58 @@ class Database:
             logger.error(f"获取医院列表失败: {e}")
             return [], 0
 
+    async def get_hospitals_by_city(self, city_id: int = None, page: int = 1, page_size: int = 20) -> tuple:
+        """通过城市获取所有医院（包括该城市下所有区县的医院）"""
+        try:
+            # 处理边界值
+            if page < 1:
+                page = 1
+            if page_size < 1:
+                page_size = 20
+            if page_size > 1000:  # 限制最大页面大小
+                page_size = 1000
+
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                if city_id:
+                    # 获取指定城市下所有区县的医院（通过JOIN连接districts表）
+                    cursor.execute("""
+                        SELECT COUNT(*)
+                        FROM hospitals h
+                        INNER JOIN districts d ON h.district_id = d.id
+                        WHERE d.city_id = ? AND h.deleted_at IS NULL
+                    """, (city_id,))
+                    total = cursor.fetchone()[0]
+
+                    # 计算有效页面数
+                    total_pages = (total + page_size - 1) // page_size if total > 0 else 1
+                    if page > total_pages and total > 0:
+                        page = total_pages
+
+                    offset = (page - 1) * page_size
+                    cursor.execute("""
+                        SELECT h.*
+                        FROM hospitals h
+                        INNER JOIN districts d ON h.district_id = d.id
+                        WHERE d.city_id = ? AND h.deleted_at IS NULL
+                        ORDER BY h.name
+                        LIMIT ? OFFSET ?
+                    """, (city_id, page_size, offset))
+                else:
+                    # 如果没有提供city_id，返回空结果
+                    return [], 0
+
+                rows = cursor.fetchall()
+                columns = [description[0] for description in cursor.description]
+                items = [dict(zip(columns, row)) for row in rows]
+
+                return items, total
+
+        except Exception as e:
+            logger.error(f"通过城市获取医院列表失败: {e}")
+            return [], 0
+
     async def search_hospitals(self, query: str, limit: int = 20) -> list:
         """搜索医院"""
         try:
