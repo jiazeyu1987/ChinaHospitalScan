@@ -186,6 +186,12 @@ def _is_html_page(url: str, unlimited_mode: bool = False) -> bool:
             logging.debug(f"   ✅ 通过HTML后缀检查")
             return True
 
+        # 检查路径中包含动态页面技术
+        dynamic_extensions = [".aspx", ".php", ".jsp", ".asp", ".cgi", ".do", ".action"]
+        if any(ext in path.lower() for ext in dynamic_extensions):
+            logging.debug(f"   ✅ 通过动态页面技术检查")
+            return True
+
         # 2. 没有后缀的路径（可能是动态页面）
         if not path or path == "/" or not any(path.lower().endswith(ext) for ext in
             ['.css', '.js', '.jpg', '.jpeg', '.png', '.gif', '.svg', '.ico', '.pdf',
