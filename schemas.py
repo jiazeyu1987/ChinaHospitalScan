@@ -488,3 +488,37 @@ class HospitalKeywordsDeleteRequest(BaseModel):
     """医院关键词重置请求模型"""
     hospital_id: int = Field(..., description="医院ID")
     confirm: bool = Field(..., description="设置为True确认重置医院关键词为默认值")
+
+
+class HospitalNameUpdateRequest(BaseModel):
+    """医院名字修改请求模型"""
+    hospital_id: int = Field(..., description="医院ID", gt=0)
+    name: str = Field(..., description="医院新名称", min_length=2, max_length=200,
+                     example="上海交通大学医学院附属瑞金医院")
+
+    @field_validator('name')
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """验证医院名称"""
+        if not v or not v.strip():
+            raise ValueError("医院名称不能为空")
+
+        # 去除首尾空白字符
+        v = v.strip()
+
+        # 检查是否包含非法字符（可根据需要调整）
+        if any(char in v for char in ['<', '>', '"', "'", '&', '|', ';']):
+            raise ValueError("医院名称包含非法字符")
+
+        return v
+
+
+class HospitalNameUpdateResponse(BaseModel):
+    """医院名字修改响应模型"""
+    success: bool = Field(..., description="操作是否成功")
+    message: str = Field(..., description="操作结果描述")
+    hospital_id: int = Field(..., description="医院ID")
+    old_name: str = Field(..., description="原医院名称")
+    new_name: str = Field(..., description="新医院名称")
+    request_id: str = Field(..., description="请求ID")
+    timestamp: datetime = Field(default_factory=datetime.now, description="操作时间")

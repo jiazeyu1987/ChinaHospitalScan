@@ -64,6 +64,8 @@ from schemas import (
     HospitalKeywordsRequest,
     HospitalKeywordsResponse,
     HospitalKeywordsDeleteRequest,
+    HospitalNameUpdateRequest,
+    HospitalNameUpdateResponse,
 )
 
 # Define StandardResponse for consistency
@@ -2087,6 +2089,134 @@ async def delete_hospital(hospital_id: int) -> dict:
         logger.error(f"[{request_id}] 异常详情: {type(e).__name__}: {str(e)}")
         import traceback
         logger.error(f"[{request_id}] 异常堆栈: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+@app.put("/hospital/{hospital_id}/name",
+          response_model=HospitalNameUpdateResponse,
+          summary="修改医院名称",
+          description="""
+修改指定医院的名称。
+
+**功能特性**：
+- 🏥 名称验证：完整的医院名称格式验证和长度限制
+- 🔄 唯一性检查：确保新名称在同区县内不重复
+- 📝 操作日志：完整的名称变更审计记录
+- ⚡ 即时生效：修改后立即在所有相关模块中生效
+- 🔒 安全检查：防止SQL注入和XSS攻击
+
+**参数说明**：
+- hospital_id: 医院ID（路径参数）
+- name: 医院新名称（请求体参数）
+
+**使用示例**：
+```json
+{
+  "name": "上海交通大学医学院附属瑞金医院"
+}
+```
+
+**返回说明**：
+- 返回操作结果、原名称、新名称等详细信息
+- 包含请求ID用于操作追踪和日志查询
+""")
+async def update_hospital_name(
+    hospital_id: int,
+    request: HospitalNameUpdateRequest
+):
+    """
+    修改医院名称API接口
+
+    Args:
+        hospital_id: 医院ID
+        request: 医院名称更新请求
+
+    Returns:
+        HospitalNameUpdateResponse: 更新结果
+    """
+    import uuid
+    request_id = f"HN-{uuid.uuid4().hex[:8]}"
+    start_time = time.time()
+
+    logger.info(f"[{request_id}] 开始医院名称修改操作")
+    logger.info(f"[{request_id}] 医院ID: {hospital_id}, 新名称: '{request.name}'")
+
+    try:
+        # 获取数据库连接
+        db = await get_db()
+
+        # 参数验证
+        if hospital_id != request.hospital_id:
+            error_msg = "路径参数中的医院ID与请求体中的医院ID不匹配"
+            logger.error(f"[{request_id}] {error_msg}")
+            raise HTTPException(status_code=400, detail=error_msg)
+
+        # 检查医院是否存在
+        hospital = await db.get_hospital_by_id(hospital_id)
+        if not hospital:
+            error_msg = f"医院ID {hospital_id} 不存在"
+            logger.error(f"[{request_id}] {error_msg}")
+            raise HTTPException(status_code=404, detail=error_msg)
+
+        old_name = hospital['name']
+
+        # 检查名称是否有实际变化
+        if old_name == request.name:
+            logger.info(f"[{request_id}] 医院名称无变化，跳过更新")
+            return HospitalNameUpdateResponse(
+                success=True,
+                message="医院名称无变化，无需更新",
+                hospital_id=hospital_id,
+                old_name=old_name,
+                new_name=request.name,
+                request_id=request_id
+            )
+
+        # 检查新名称是否在同区县内已存在
+        existing_hospital = await db.get_hospital_by_name_and_district(request.name, hospital['district_id'])
+        if existing_hospital and existing_hospital['id'] != hospital_id:
+            error_msg = f"医院名称 '{request.name}' 在该区县内已存在（医院ID: {existing_hospital['id']}）"
+            logger.error(f"[{request_id}] {error_msg}")
+            raise HTTPException(status_code=409, detail=error_msg)
+
+        # 执行数据库更新
+        update_success = await db.update_hospital(
+            hospital_id=hospital_id,
+            name=request.name
+        )
+
+        if not update_success:
+            error_msg = "数据库更新失败，请稍后重试"
+            logger.error(f"[{request_id}] {error_msg}")
+            raise HTTPException(status_code=500, detail=error_msg)
+
+        # 计算耗时
+        total_time = time.time() - start_time
+
+        logger.info(f"[{request_id}] 医院名称修改成功")
+        logger.info(f"[{request_id}] 原名称: '{old_name}' -> 新名称: '{request.name}'")
+        logger.info(f"[{request_id}] 总耗时: {total_time:.3f}s")
+
+        return HospitalNameUpdateResponse(
+            success=True,
+            message=f"医院名称修改成功，从 '{old_name}' 更改为 '{request.name}'",
+            hospital_id=hospital_id,
+            old_name=old_name,
+            new_name=request.name,
+            request_id=request_id
+        )
+
+    except HTTPException:
+        # 重新抛出HTTP异常
+        total_time = time.time() - start_time
+        logger.error(f"[{request_id}] 医院名称修改失败，总耗时={total_time:.3f}s")
+        raise
+
+    except Exception as e:
+        total_time = time.time() - start_time
+        error_msg = f"修改医院名称时发生未知错误: {str(e)}"
+        logger.error(f"[{request_id}] {error_msg}，总耗时={total_time:.3f}s")
+        logger.error(f"[{request_id}] 错误详情: {repr(e)}")
         raise HTTPException(status_code=500, detail=error_msg)
 
 
